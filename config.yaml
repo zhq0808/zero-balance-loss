@@ -1,0 +1,30 @@
+# 服务配置
+server:
+  port: 8080
+  mode: debug # debug, release, test
+
+# 数据库配置
+database:
+  host: localhost
+  port: 3306
+  user: root
+  password: root
+  database: zero_balance_loss
+  max_idle_conns: 10
+  max_open_conns: 100
+
+# Redis配置
+redis:
+  host: localhost
+  port: 6379
+  password: ""
+  db: 0
+  pool_size: 10
+
+# Kafka配置
+kafka:
+  brokers:
+    - localhost:9092
+  topics:
+    balance_change: balance-change-topic
+  consumer_group: zero-balance-consumer

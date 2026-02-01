@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log"
 
 	"zero-balance-loss/api"
@@ -10,6 +11,11 @@ import (
 )
 
 func main() {
+	// 加载配置文件
+	if err := config.LoadConfig("config.yaml"); err != nil {
+		log.Fatalf("Failed to load config: %v", err)
+	}
+
 	// 初始化数据库连接
 	config.InitDB()
 	defer config.CloseDB()
@@ -21,7 +27,7 @@ func main() {
 	api.RegisterRoutes(r)
 
 	// 启动服务
-	port := ":8080"
+	port := fmt.Sprintf(":%d", config.GetConfig().Server.Port)
 	log.Printf("Server starting on port %s...", port)
 	if err := r.Run(port); err != nil {
 		log.Fatalf("Failed to start server: %v", err)
