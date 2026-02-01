@@ -1,0 +1,696 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Zero Balance Loss - 并发余额丢失演示</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1600px;
+            margin: 0 auto;
+        }
+        
+        .header {
+            text-align: center;
+            color: white;
+            margin-bottom: 30px;
+        }
+        
+        .header h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+        
+        .header p {
+            font-size: 1.1rem;
+            opacity: 0.9;
+        }
+        
+        .dashboard {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+        
+        .card {
+            background: white;
+            border-radius: 12px;
+            padding: 25px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        }
+        
+        .card-title {
+            font-size: 1.3rem;
+            font-weight: 600;
+            margin-bottom: 20px;
+            color: #333;
+            border-bottom: 2px solid #667eea;
+            padding-bottom: 10px;
+        }
+        
+        /* 控制面板 */
+        .control-panel {
+            grid-column: span 2;
+        }
+        
+        .controls {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+        }
+        
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        
+        .control-group label {
+            font-weight: 500;
+            color: #555;
+            font-size: 0.9rem;
+        }
+        
+        .control-group input {
+            padding: 10px;
+            border: 2px solid #e0e0e0;
+            border-radius: 6px;
+            font-size: 1rem;
+            transition: border-color 0.3s;
+        }
+        
+        .control-group input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        
+        .button-group {
+            display: flex;
+            gap: 10px;
+            margin-top: 20px;
+        }
+        
+        button {
+            flex: 1;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 6px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        
+        .btn-primary {
+            background: #667eea;
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            background: #5568d3;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+        
+        .btn-danger {
+            background: #ef4444;
+            color: white;
+        }
+        
+        .btn-danger:hover {
+            background: #dc2626;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(239, 68, 68, 0.4);
+        }
+        
+        .btn-success {
+            background: #10b981;
+            color: white;
+        }
+        
+        .btn-success:hover {
+            background: #059669;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4);
+        }
+        
+        .btn-warning {
+            background: #f59e0b;
+            color: white;
+        }
+        
+        .btn-warning:hover {
+            background: #d97706;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(245, 158, 11, 0.4);
+        }
+        
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none !important;
+        }
+        
+        .hidden {
+            display: none !important;
+        }
+        
+        /* 统计面板 */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 15px;
+        }
+        
+        .stat-item {
+            text-align: center;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 8px;
+            color: white;
+        }
+        
+        .stat-value {
+            font-size: 2rem;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+        
+        .stat-label {
+            font-size: 0.9rem;
+            opacity: 0.9;
+        }
+        
+        /* 余额水位图 */
+        .balance-chart {
+            height: 300px;
+            position: relative;
+            background: #f8f9fa;
+            border-radius: 8px;
+            padding: 20px;
+        }
+        
+        canvas {
+            width: 100% !important;
+            height: 100% !important;
+        }
+        
+        /* 时序追踪 */
+        .trace-container {
+            grid-column: span 2;
+            max-height: 500px;
+            overflow-y: auto;
+        }
+        
+        .trace-list {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        
+        .trace-item {
+            padding: 15px;
+            background: #f8f9fa;
+            border-left: 4px solid #667eea;
+            border-radius: 4px;
+            display: grid;
+            grid-template-columns: 80px 100px 1fr 150px;
+            align-items: center;
+            gap: 15px;
+            font-size: 0.9rem;
+            transition: all 0.3s;
+        }
+        
+        .trace-item:hover {
+            background: #e9ecef;
+            transform: translateX(5px);
+        }
+        
+        .trace-item.conflict {
+            border-left-color: #ef4444;
+            background: #fee;
+        }
+        
+        .trace-id {
+            font-family: 'Courier New', monospace;
+            font-weight: bold;
+            color: #667eea;
+        }
+        
+        .trace-step {
+            padding: 4px 8px;
+            background: #667eea;
+            color: white;
+            border-radius: 4px;
+            text-align: center;
+            font-size: 0.85rem;
+        }
+        
+        .trace-step.step-1 {
+            background: #3b82f6;
+        }
+        
+        .trace-step.step-2 {
+            background: #ef4444;
+        }
+        
+        .trace-step.step-3 {
+            background: #10b981;
+        }
+        
+        .trace-details {
+            color: #555;
+        }
+        
+        .trace-time {
+            color: #999;
+            font-size: 0.85rem;
+            text-align: right;
+        }
+        
+        .anomaly {
+            color: #ef4444;
+            font-weight: bold;
+        }
+        
+        .status {
+            padding: 10px;
+            border-radius: 6px;
+            text-align: center;
+            font-weight: 500;
+            margin-top: 15px;
+        }
+        
+        .status.connected {
+            background: #d1fae5;
+            color: #065f46;
+        }
+        
+        .status.disconnected {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+        
+        .status.attacking {
+            background: #fef3c7;
+            color: #92400e;
+            animation: pulse 2s infinite;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+        
+        /* 滚动条样式 */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+        
+        ::-webkit-scrollbar-track {
+            background: #f1f1f1;
+            border-radius: 4px;
+        }
+        
+        ::-webkit-scrollbar-thumb {
+            background: #888;
+            border-radius: 4px;
+        }
+        
+        ::-webkit-scrollbar-thumb:hover {
+            background: #555;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>⚡ Zero Balance Loss</h1>
+            <p>并发场景下的余额更新丢失演示 - Level 1: 无锁实现</p>
+        </div>
+        
+        <div class="dashboard">
+            <!-- 控制面板 -->
+            <div class="card control-panel">
+                <h2 class="card-title">🎮 控制台</h2>
+                <div class="controls">
+                    <div class="control-group">
+                        <label>初始余额（元）</label>
+                        <input type="number" id="initialBalance" value="1000" min="0">
+                    </div>
+                    <div class="control-group">
+                        <label>并发数</label>
+                        <input type="number" id="concurrency" value="50" min="1" max="500">
+                    </div>
+                    <div class="control-group">
+                        <label>每次扣款（元）</label>
+                        <input type="number" id="deductAmount" value="10" min="1">
+                    </div>
+                    <div class="control-group">
+                        <label>每个协程请求次数</label>
+                        <input type="number" id="requestsPerRoutine" value="10" min="1" max="100">
+                    </div>
+                </div>
+                <div class="button-group">
+                    <button class="btn-success" onclick="resetBalance()">重置余额</button>
+                    <button class="btn-primary" id="attackBtn" onclick="startAttack()">🚀 发起并发攻击</button>
+                    <button class="btn-warning hidden" id="stopBtn" onclick="stopAttack()">⏹️ 停止攻击</button>
+                    <button class="btn-danger" onclick="clearTraces()">清空记录</button>
+                </div>
+                <div id="status" class="status disconnected">连接中...</div>
+            </div>
+            
+            <!-- 统计面板 -->
+            <div class="card">
+                <h2 class="card-title">📊 请求统计</h2>
+                <div class="stats-grid">
+                    <div class="stat-item">
+                        <div class="stat-value" id="totalRequests">0</div>
+                        <div class="stat-label">总请求数</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" id="successCount">0</div>
+                        <div class="stat-label">成功数</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" id="failureCount">0</div>
+                        <div class="stat-label">失败数</div>
+                    </div>
+                </div>
+                <div style="margin-top: 20px; padding: 15px; background: #f8f9fa; border-radius: 8px;">
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 10px;">
+                        <span>当前余额：</span>
+                        <strong id="currentBalance">0.00 元</strong>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 10px;">
+                        <span>理论余额：</span>
+                        <strong id="expectedBalance">0.00 元</strong>
+                    </div>
+                    <div style="display: flex; justify-content: space-between;">
+                        <span>丢失金额：</span>
+                        <strong id="lostAmount" class="anomaly">0.00 元</strong>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 余额水位图 -->
+            <div class="card">
+                <h2 class="card-title">📈 余额水位实时监控</h2>
+                <div class="balance-chart">
+                    <canvas id="balanceChart"></canvas>
+                </div>
+                <div style="margin-top: 15px; display: flex; justify-content: center; gap: 20px; font-size: 0.9rem;">
+                    <div><span style="color: #3b82f6;">●</span> 实际余额</div>
+                    <div><span style="color: #ef4444;">●</span> 理论余额</div>
+                </div>
+            </div>
+            
+            <!-- 时序追踪 -->
+            <div class="card trace-container">
+                <h2 class="card-title">🔍 并发冲突时序追踪</h2>
+                <div class="trace-list" id="traceList">
+                    <div style="text-align: center; padding: 40px; color: #999;">
+                        等待并发请求...
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script>
+        let ws = null;
+        let chart = null;
+        let initialBalanceValue = 100000; // 分
+        let expectedBalance = 100000;
+        let isAttacking = false;
+        let shouldStopAttack = false; // 停止攻击标志
+        
+        // 初始化图表
+        function initChart() {
+            const ctx = document.getElementById('balanceChart').getContext('2d');
+            chart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: '实际余额',
+                        data: [],
+                        borderColor: '#3b82f6',
+                        backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                        tension: 0.4
+                    }, {
+                        label: '理论余额',
+                        data: [],
+                        borderColor: '#ef4444',
+                        backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                        tension: 0.4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        y: {
+                            beginAtZero: false
+                        }
+                    },
+                    plugins: {
+                        legend: {
+                            display: false
+                        }
+                    }
+                }
+            });
+        }
+        
+        // 连接WebSocket
+        function connectWebSocket() {
+            ws = new WebSocket('ws://' + window.location.host + '/ws');
+            
+            ws.onopen = () => {
+                console.log('WebSocket connected');
+                document.getElementById('status').className = 'status connected';
+                document.getElementById('status').textContent = '✓ 已连接';
+            };
+            
+            ws.onclose = () => {
+                console.log('WebSocket disconnected');
+                document.getElementById('status').className = 'status disconnected';
+                document.getElementById('status').textContent = '✗ 连接断开';
+                setTimeout(connectWebSocket, 3000);
+            };
+            
+            ws.onmessage = (event) => {
+                const msg = JSON.parse(event.data);
+                handleMessage(msg);
+            };
+        }
+        
+        // 处理消息
+        function handleMessage(msg) {
+            switch(msg.type) {
+                case 'init':
+                    updateBalance(msg.data.balance);
+                    updateStats(msg.data.stats);
+                    break;
+                case 'balance_update':
+                    updateBalance(msg.data.balance);
+                    updateStats(msg.data.stats);
+                    updateChart(msg.data.balance);
+                    break;
+                case 'trace':
+                    addTrace(msg.data);
+                    break;
+                case 'reset':
+                    location.reload();
+                    break;
+            }
+        }
+        
+        // 更新余额显示
+        function updateBalance(balance) {
+            document.getElementById('currentBalance').textContent = (balance / 100).toFixed(2) + ' 元';
+            const lost = (balance - expectedBalance) / 100;
+            document.getElementById('lostAmount').textContent = lost.toFixed(2) + ' 元';
+        }
+        
+        // 更新统计
+        function updateStats(stats) {
+            document.getElementById('totalRequests').textContent = stats.total_requests;
+            document.getElementById('successCount').textContent = stats.success_count;
+            document.getElementById('failureCount').textContent = stats.failure_count;
+            
+            // 计算理论余额
+            const deductAmount = parseInt(document.getElementById('deductAmount').value) * 100;
+            expectedBalance = initialBalanceValue - (stats.success_count * deductAmount);
+            document.getElementById('expectedBalance').textContent = (expectedBalance / 100).toFixed(2) + ' 元';
+        }
+        
+        // 更新图表
+        function updateChart(balance) {
+            const now = new Date().toLocaleTimeString();
+            
+            if (chart.data.labels.length > 50) {
+                chart.data.labels.shift();
+                chart.data.datasets[0].data.shift();
+                chart.data.datasets[1].data.shift();
+            }
+            
+            chart.data.labels.push(now);
+            chart.data.datasets[0].data.push(balance / 100);
+            chart.data.datasets[1].data.push(expectedBalance / 100);
+            chart.update('none');
+        }
+        
+        // 添加追踪记录
+        function addTrace(trace) {
+            const traceList = document.getElementById('traceList');
+            
+            // 清空提示
+            if (traceList.children[0]?.textContent.includes('等待')) {
+                traceList.innerHTML = '';
+            }
+            
+            const item = document.createElement('div');
+            item.className = 'trace-item';
+            
+            const stepClass = `step-${trace.step}`;
+            const time = new Date(trace.timestamp).toLocaleTimeString();
+            
+            item.innerHTML = `
+                <div class="trace-id">${trace.request_id}</div>
+                <div class="trace-step ${stepClass}">${trace.step_name}</div>
+                <div class="trace-details">
+                    余额: ${(trace.balance / 100).toFixed(2)}元 
+                    ${trace.new_balance ? `→ ${(trace.new_balance / 100).toFixed(2)}元` : ''}
+                    (扣: ${(trace.amount / 100).toFixed(2)}元)
+                </div>
+                <div class="trace-time">${time}</div>
+            `;
+            
+            traceList.insertBefore(item, traceList.firstChild);
+            
+            // 最多保留100条
+            if (traceList.children.length > 100) {
+                traceList.removeChild(traceList.lastChild);
+            }
+        }
+        
+        // 重置余额
+        async function resetBalance() {
+            const balance = parseInt(document.getElementById('initialBalance').value) * 100;
+            initialBalanceValue = balance;
+            expectedBalance = balance;
+            
+            try {
+                const response = await fetch('/api/reset', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ user_id: 1, balance: balance })
+                });
+                
+                if (response.ok) {
+                    clearTraces();
+                    chart.data.labels = [];
+                    chart.data.datasets[0].data = [];
+                    chart.data.datasets[1].data = [];
+                    chart.update();
+                }
+            } catch (error) {
+                console.error('Reset failed:', error);
+            }
+        }
+        
+        // 发起攻击
+        async function startAttack() {
+            if (isAttacking) return;
+            
+            isAttacking = true;
+            shouldStopAttack = false;
+            const attackBtn = document.getElementById('attackBtn');
+            const stopBtn = document.getElementById('stopBtn');
+            
+            attackBtn.classList.add('hidden');
+            stopBtn.classList.remove('hidden');
+            
+            document.getElementById('status').className = 'status attacking';
+            document.getElementById('status').textContent = '⚡ 攻击进行中...';
+            
+            const concurrency = parseInt(document.getElementById('concurrency').value);
+            const amount = parseInt(document.getElementById('deductAmount').value) * 100;
+            const requests = parseInt(document.getElementById('requestsPerRoutine').value);
+            
+            const promises = [];
+            for (let i = 0; i < concurrency; i++) {
+                promises.push(sendConcurrentRequests(amount, requests));
+            }
+            
+            await Promise.all(promises);
+            
+            isAttacking = false;
+            attackBtn.classList.remove('hidden');
+            stopBtn.classList.add('hidden');
+            
+            document.getElementById('status').className = 'status connected';
+            document.getElementById('status').textContent = shouldStopAttack ? '⏹️ 已停止' : '✓ 已连接';
+        }
+        
+        // 停止攻击
+        function stopAttack() {
+            shouldStopAttack = true;
+            document.getElementById('status').textContent = '⏹️ 正在停止...';
+        }
+        
+        // 发送并发请求
+        async function sendConcurrentRequests(amount, count) {
+            for (let i = 0; i < count; i++) {
+                if (shouldStopAttack) {
+                    break;
+                }
+                
+                try {
+                    await fetch('/api/deduct', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ user_id: 1, amount: amount })
+                    });
+                } catch (error) {
+                    console.error('Request failed:', error);
+                }
+                await new Promise(resolve => setTimeout(resolve, 10));
+            }
+        }
+        
+        // 清空追踪
+        function clearTraces() {
+            document.getElementById('traceList').innerHTML = `
+                <div style="text-align: center; padding: 40px; color: #999;">
+                    等待并发请求...
+                </div>
+            `;
+        }
+        
+        // 初始化
+        window.onload = () => {
+            initChart();
+            connectWebSocket();
+        };
+    </script>
+</body>
+</html>
