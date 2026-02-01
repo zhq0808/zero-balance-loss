@@ -33,6 +33,12 @@ var (
 		StartTime:     time.Now(),
 	}
 	statsMutex sync.Mutex
+
+	// 监控状态控制
+	// isMonitoringPaused 表示是否暂停实时监控
+	// 当为 true 时，后台定时任务将停止查询数据库和广播余额更新
+	isMonitoringPaused bool
+	monitoringMutex    sync.RWMutex // 使用读写锁，读多写少的场景
 )
 
 // Stats 统计信息
@@ -69,6 +75,7 @@ type TraceEvent struct {
 }
 
 // RegisterRoutes 注册路由
+// 注册所有HTTP路由和WebSocket端点
 func RegisterRoutes(r *gin.Engine) {
 	// 静态文件
 	r.Static("/static", "./web/static")
@@ -82,10 +89,25 @@ func RegisterRoutes(r *gin.Engine) {
 	// API 路由组
 	api := r.Group("/api")
 	{
+		// 余额扣减接口
 		api.POST("/deduct", deductHandler)
+
+		// 余额查询接口
 		api.GET("/balance/:user_id", getBalanceHandler)
+
+		// 重置余额接口
 		api.POST("/reset", resetBalanceHandler)
+
+		// 统计信息接口
 		api.GET("/stats", getStatsHandler)
+
+		// 监控控制接口
+		monitoring := api.Group("/monitoring")
+		{
+			monitoring.POST("/pause", pauseMonitoringHandler)     // 暂停监控
+			monitoring.POST("/resume", resumeMonitoringHandler)   // 恢复监控
+			monitoring.GET("/status", getMonitoringStatusHandler) // 获取监控状态
+		}
 	}
 
 	// WebSocket
@@ -252,6 +274,7 @@ func resetBalanceHandler(c *gin.Context) {
 }
 
 // getStatsHandler 获取统计信息
+// 返回当前的请求统计数据，包括总请求数、成功数、失败数
 func getStatsHandler(c *gin.Context) {
 	statsMutex.Lock()
 	defer statsMutex.Unlock()
@@ -263,7 +286,109 @@ func getStatsHandler(c *gin.Context) {
 	})
 }
 
+// pauseMonitoringHandler 暂停实时监控
+// 暂停后台定时任务的余额查询和数据广播，减少数据库负载
+// 适用场景：用户查看历史数据、系统维护、降低数据库压力
+func pauseMonitoringHandler(c *gin.Context) {
+	monitoringMutex.Lock()
+	defer monitoringMutex.Unlock()
+
+	// 如果已经是暂停状态，直接返回
+	if isMonitoringPaused {
+		c.JSON(http.StatusOK, Response{
+			Code:    200,
+			Message: "monitoring already paused",
+			Data: map[string]interface{}{
+				"status": "paused",
+			},
+		})
+		return
+	}
+
+	// 设置暂停标志
+	isMonitoringPaused = true
+	log.Println("实时监控已暂停")
+
+	// 广播监控状态变更
+	broadcast(WSMessage{
+		Type: "monitoring_status",
+		Data: map[string]interface{}{
+			"status": "paused",
+		},
+		Timestamp: time.Now().UnixMilli(),
+	})
+
+	c.JSON(http.StatusOK, Response{
+		Code:    200,
+		Message: "monitoring paused successfully",
+		Data: map[string]interface{}{
+			"status": "paused",
+		},
+	})
+}
+
+// resumeMonitoringHandler 恢复实时监控
+// 恢复后台定时任务，继续查询和广播余额数据
+func resumeMonitoringHandler(c *gin.Context) {
+	monitoringMutex.Lock()
+	defer monitoringMutex.Unlock()
+
+	// 如果已经是运行状态，直接返回
+	if !isMonitoringPaused {
+		c.JSON(http.StatusOK, Response{
+			Code:    200,
+			Message: "monitoring already running",
+			Data: map[string]interface{}{
+				"status": "running",
+			},
+		})
+		return
+	}
+
+	// 取消暂停标志
+	isMonitoringPaused = false
+	log.Println("实时监控已恢复")
+
+	// 广播监控状态变更
+	broadcast(WSMessage{
+		Type: "monitoring_status",
+		Data: map[string]interface{}{
+			"status": "running",
+		},
+		Timestamp: time.Now().UnixMilli(),
+	})
+
+	c.JSON(http.StatusOK, Response{
+		Code:    200,
+		Message: "monitoring resumed successfully",
+		Data: map[string]interface{}{
+			"status": "running",
+		},
+	})
+}
+
+// getMonitoringStatusHandler 获取监控状态
+// 返回当前监控是运行中还是已暂停
+func getMonitoringStatusHandler(c *gin.Context) {
+	monitoringMutex.RLock()
+	defer monitoringMutex.RUnlock()
+
+	status := "running"
+	if isMonitoringPaused {
+		status = "paused"
+	}
+
+	c.JSON(http.StatusOK, Response{
+		Code:    200,
+		Message: "success",
+		Data: map[string]interface{}{
+			"status": status,
+		},
+	})
+}
+
 // wsHandler WebSocket处理
+// 处理WebSocket连接，用于实时推送数据到前端
 func wsHandler(c *gin.Context) {
 	conn, err := wsUpgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
@@ -329,22 +454,41 @@ func broadcastTrace(event TraceEvent) {
 	})
 }
 
-// 定期广播余额和统计信息
+// init 初始化函数
+// 启动后台定时任务，每500ms广播一次余额和统计数据
+// 该任务会检查监控状态，如果被暂停则跳过执行
 func init() {
 	go func() {
+		// 创建定时器，每500毫秒触发一次
 		ticker := time.NewTicker(500 * time.Millisecond)
 		defer ticker.Stop()
 
+		log.Println("后台余额监控任务已启动（500ms间隔）")
+
 		for range ticker.C {
-			balance, err := accountService.GetBalance(1)
-			if err != nil {
+			// 检查监控是否被暂停
+			monitoringMutex.RLock()
+			isPaused := isMonitoringPaused
+			monitoringMutex.RUnlock()
+
+			// 如果监控已暂停，跳过本次查询和广播
+			if isPaused {
 				continue
 			}
 
+			// 查询当前余额（这里会执行 SELECT 查询）
+			balance, err := accountService.GetBalance(1)
+			if err != nil {
+				log.Printf("查询余额失败: %v", err)
+				continue
+			}
+
+			// 获取当前统计数据
 			statsMutex.Lock()
 			currentStats := *stats
 			statsMutex.Unlock()
 
+			// 通过WebSocket广播余额更新给所有连接的客户端
 			broadcast(WSMessage{
 				Type: "balance_update",
 				Data: map[string]interface{}{
@@ -355,6 +499,4 @@ func init() {
 			})
 		}
 	}()
-
-	log.Println("Background balance broadcaster started")
 }
