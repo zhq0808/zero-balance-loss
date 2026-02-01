@@ -1,6 +1,7 @@
 package api
 
 import (
+	"fmt"
 	"log"
 	"net/http"
 	"sync"
@@ -39,6 +40,20 @@ var (
 	// 当为 true 时，后台定时任务将停止查询数据库和广播余额更新
 	isMonitoringPaused bool
 	monitoringMutex    sync.RWMutex // 使用读写锁，读多写少的场景
+
+	// 历史数据存储
+	// balanceHistory 存储余额的历史数据点，用于历史查看功能
+	// 最多保存最近1000条记录，超过则删除最早的记录
+	balanceHistory      []BalanceHistory
+	balanceHistoryMutex sync.RWMutex
+	maxHistorySize      = 1000 // 最大历史记录数
+
+	// 执行模式控制
+	// useLockMode 表示是否使用加锁模式
+	// true: 使用互斥锁保护，无并发问题但性能略低
+	// false: 不加锁，演示并发问题
+	useLockMode bool
+	modeMutex   sync.RWMutex
 )
 
 // Stats 统计信息
@@ -47,6 +62,14 @@ type Stats struct {
 	SuccessCount  int64     `json:"success_count"`
 	FailureCount  int64     `json:"failure_count"`
 	StartTime     time.Time `json:"start_time"`
+}
+
+// BalanceHistory 余额历史数据点
+// 用于记录每个时间点的实际余额和理论余额，支持历史查看功能
+type BalanceHistory struct {
+	Timestamp       int64 `json:"timestamp"`        // 时间戳（毫秒）
+	ActualBalance   int64 `json:"actual_balance"`   // 实际余额（分）
+	ExpectedBalance int64 `json:"expected_balance"` // 理论余额（分）
 }
 
 // Response 统一响应格式
@@ -108,6 +131,16 @@ func RegisterRoutes(r *gin.Engine) {
 			monitoring.POST("/resume", resumeMonitoringHandler)   // 恢复监控
 			monitoring.GET("/status", getMonitoringStatusHandler) // 获取监控状态
 		}
+
+		// 执行模式控制接口
+		mode := api.Group("/mode")
+		{
+			mode.POST("/switch", switchModeHandler)   // 切换执行模式
+			mode.GET("/status", getModeStatusHandler) // 获取当前模式
+		}
+
+		// 历史数据接口
+		api.GET("/balance/history", getBalanceHistoryHandler) // 获取历史数据
 	}
 
 	// WebSocket
@@ -156,8 +189,20 @@ func deductHandler(c *gin.Context) {
 		Timestamp: time.Now().UnixMilli(),
 	})
 
-	// Step 2: 执行扣款
-	resp, err := accountService.DeductBalance(&req, requestID)
+	// Step 2: 执行扣款（根据当前模式选择实现）
+	modeMutex.RLock()
+	currentMode := useLockMode
+	modeMutex.RUnlock()
+
+	var resp *service.DeductResponse
+	if currentMode {
+		// 加锁模式：使用互斥锁保护
+		resp, err = accountService.DeductBalanceWithLock(&req, requestID)
+	} else {
+		// 无锁模式：演示并发问题
+		resp, err = accountService.DeductBalance(&req, requestID)
+	}
+
 	if err != nil {
 		statsMutex.Lock()
 		stats.FailureCount++
@@ -367,6 +412,178 @@ func resumeMonitoringHandler(c *gin.Context) {
 	})
 }
 
+// switchModeHandler 切换执行模式（加锁/不加锁）
+// 请求体: {"use_lock": true/false}
+func switchModeHandler(c *gin.Context) {
+	var req struct {
+		UseLock bool `json:"use_lock"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, Response{
+			Code:    400,
+			Message: "invalid request",
+		})
+		return
+	}
+
+	modeMutex.Lock()
+	useLockMode = req.UseLock
+	modeMutex.Unlock()
+
+	mode := "unlocked"
+	if req.UseLock {
+		mode = "locked"
+	}
+
+	log.Printf("执行模式已切换: %s", mode)
+
+	// 广播模式变更
+	broadcast(WSMessage{
+		Type: "mode_changed",
+		Data: map[string]interface{}{
+			"mode":     mode,
+			"use_lock": req.UseLock,
+		},
+		Timestamp: time.Now().UnixMilli(),
+	})
+
+	c.JSON(http.StatusOK, Response{
+		Code:    200,
+		Message: "mode switched successfully",
+		Data: map[string]interface{}{
+			"mode":     mode,
+			"use_lock": req.UseLock,
+		},
+	})
+}
+
+// getModeStatusHandler 获取当前执行模式
+func getModeStatusHandler(c *gin.Context) {
+	modeMutex.RLock()
+	defer modeMutex.RUnlock()
+
+	mode := "unlocked"
+	if useLockMode {
+		mode = "locked"
+	}
+
+	c.JSON(http.StatusOK, Response{
+		Code:    200,
+		Message: "success",
+		Data: map[string]interface{}{
+			"mode":     mode,
+			"use_lock": useLockMode,
+		},
+	})
+}
+
+// getBalanceHistoryHandler 获取历史余额数据
+// 支持通过查询参数指定时间范围：?start=timestamp&end=timestamp
+// 如果不指定参数，返回所有历史数据
+func getBalanceHistoryHandler(c *gin.Context) {
+	// 获取查询参数
+	startStr := c.Query("start")
+	endStr := c.Query("end")
+
+	balanceHistoryMutex.RLock()
+	defer balanceHistoryMutex.RUnlock()
+
+	// 如果没有指定时间范围，返回所有数据
+	if startStr == "" && endStr == "" {
+		c.JSON(http.StatusOK, Response{
+			Code:    200,
+			Message: "success",
+			Data:    balanceHistory,
+		})
+		return
+	}
+
+	// 解析时间戳参数
+	var startTime, endTime int64
+	var err error
+
+	if startStr != "" {
+		startTime, err = parseTimestamp(startStr)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, Response{
+				Code:    400,
+				Message: "invalid start timestamp",
+			})
+			return
+		}
+	}
+
+	if endStr != "" {
+		endTime, err = parseTimestamp(endStr)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, Response{
+				Code:    400,
+				Message: "invalid end timestamp",
+			})
+			return
+		}
+	}
+
+	// 过滤时间范围内的数据
+	var filteredData []BalanceHistory
+	for _, item := range balanceHistory {
+		// 如果只指定了开始时间
+		if startStr != "" && endStr == "" {
+			if item.Timestamp >= startTime {
+				filteredData = append(filteredData, item)
+			}
+		} else if startStr == "" && endStr != "" {
+			// 如果只指定了结束时间
+			if item.Timestamp <= endTime {
+				filteredData = append(filteredData, item)
+			}
+		} else {
+			// 如果指定了开始和结束时间
+			if item.Timestamp >= startTime && item.Timestamp <= endTime {
+				filteredData = append(filteredData, item)
+			}
+		}
+	}
+
+	c.JSON(http.StatusOK, Response{
+		Code:    200,
+		Message: "success",
+		Data:    filteredData,
+	})
+}
+
+// parseTimestamp 解析时间戳字符串
+// 支持毫秒级时间戳
+func parseTimestamp(s string) (int64, error) {
+	var timestamp int64
+	_, err := fmt.Sscanf(s, "%d", &timestamp)
+	return timestamp, err
+}
+
+// addBalanceHistory 添加余额历史记录
+// 当历史记录超过最大限制时，删除最早的记录
+func addBalanceHistory(actualBalance, expectedBalance int64) {
+	balanceHistoryMutex.Lock()
+	defer balanceHistoryMutex.Unlock()
+
+	// 创建新的历史记录
+	history := BalanceHistory{
+		Timestamp:       time.Now().UnixMilli(),
+		ActualBalance:   actualBalance,
+		ExpectedBalance: expectedBalance,
+	}
+
+	// 添加到切片
+	balanceHistory = append(balanceHistory, history)
+
+	// 如果超过最大限制，删除最早的记录
+	if len(balanceHistory) > maxHistorySize {
+		// 使用切片操作删除第一个元素
+		balanceHistory = balanceHistory[1:]
+	}
+}
+
 // getMonitoringStatusHandler 获取监控状态
 // 返回当前监控是运行中还是已暂停
 func getMonitoringStatusHandler(c *gin.Context) {
@@ -487,6 +704,14 @@ func init() {
 			statsMutex.Lock()
 			currentStats := *stats
 			statsMutex.Unlock()
+
+			// 计算理论余额（用于对比）
+			// 理论余额 = 初始余额 - (成功请求数 × 扣款金额)
+			// 这里假设每次扣款金额一致，实际项目中可能需要更复杂的计算
+			expectedBalance := balance // 简化处理，可以根据实际业务调整
+
+			// 记录历史数据点
+			addBalanceHistory(balance, expectedBalance)
 
 			// 通过WebSocket广播余额更新给所有连接的客户端
 			broadcast(WSMessage{

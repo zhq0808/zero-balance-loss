@@ -4,11 +4,15 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"sync"
 	"time"
 
 	"zero-balance-loss/config"
 	"zero-balance-loss/model"
 )
+
+// 全局互斥锁，用于加锁模式
+var accountMutex sync.Mutex
 
 // DeductRequest 扣款请求
 type DeductRequest struct {
@@ -82,6 +86,56 @@ func (s *AccountService) DeductBalance(req *DeductRequest, requestID string) (*D
 	}
 
 	log.Printf("[%s] Step 4: 更新成功，影响行数=%d", requestID, result.RowsAffected)
+
+	return &DeductResponse{
+		UserID:     req.UserID,
+		Balance:    newBalance,
+		OldBalance: oldBalance,
+		RequestID:  requestID,
+	}, nil
+}
+
+// DeductBalanceWithLock 扣减余额（加锁版本，解决并发问题）
+// 使用互斥锁保护临界区，确保并发安全
+func (s *AccountService) DeductBalanceWithLock(req *DeductRequest, requestID string) (*DeductResponse, error) {
+	// 🔒 加锁：进入临界区
+	accountMutex.Lock()
+	defer accountMutex.Unlock() // 确保函数返回时释放锁
+
+	db := config.GetDB()
+
+	// 步骤1: 查询当前余额
+	log.Printf("[%s] 🔒 [LOCKED] Step 1: 读取账户 user_id=%d", requestID, req.UserID)
+	account, err := s.GetAccount(req.UserID)
+	if err != nil {
+		return nil, err
+	}
+
+	oldBalance := account.Balance
+	log.Printf("[%s] 🔒 [LOCKED] Step 2: 当前余额=%d分 (%.2f元)", requestID, oldBalance, float64(oldBalance)/100)
+
+	// 步骤2: 检查余额是否充足
+	if account.Balance < req.Amount {
+		return nil, errors.New("insufficient balance")
+	}
+
+	// 模拟一些处理时间
+	time.Sleep(10 * time.Millisecond)
+
+	// 步骤3: 计算新余额
+	newBalance := account.Balance - req.Amount
+	log.Printf("[%s] 🔒 [LOCKED] Step 3: 计算新余额=%d分 (%.2f元)", requestID, newBalance, float64(newBalance)/100)
+
+	// 步骤4: 更新数据库（在锁的保护下，安全更新）
+	result := db.Model(&model.Account{}).
+		Where("user_id = ?", req.UserID).
+		Update("balance", newBalance)
+
+	if result.Error != nil {
+		return nil, fmt.Errorf("failed to update balance: %w", result.Error)
+	}
+
+	log.Printf("[%s] 🔒 [LOCKED] Step 4: 更新成功，影响行数=%d", requestID, result.RowsAffected)
 
 	return &DeductResponse{
 		UserID:     req.UserID,

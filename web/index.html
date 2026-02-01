@@ -4,6 +4,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Zero Balance Loss - 并发余额丢失演示</title>
+    <!-- Highlight.js for syntax highlighting -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
     <style>
         * {
             margin: 0;
@@ -160,6 +164,17 @@
             box-shadow: 0 4px 12px rgba(245, 158, 11, 0.4);
         }
         
+        .btn-info {
+            background: #3b82f6;
+            color: white;
+        }
+        
+        .btn-info:hover {
+            background: #2563eb;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
+        }
+        
         button:disabled {
             opacity: 0.5;
             cursor: not-allowed;
@@ -168,6 +183,225 @@
         
         .hidden {
             display: none !important;
+        }
+        
+        /* 时间选择器样式 */
+        .time-selector {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+        
+        .time-selector input[type="datetime-local"] {
+            padding: 8px;
+            border: 2px solid #e0e0e0;
+            border-radius: 6px;
+            font-size: 0.9rem;
+        }
+        
+        .time-selector input[type="datetime-local"]:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        
+        .mode-indicator {
+            padding: 8px 16px;
+            border-radius: 6px;
+            font-weight: 500;
+            text-align: center;
+            margin-top: 10px;
+        }
+        
+        .mode-indicator.realtime {
+            background: #d1fae5;
+            color: #065f46;
+        }
+        
+        .mode-indicator.history {
+            background: #dbeafe;
+            color: #1e40af;
+        }
+        
+        /* 代码控制台样式 */
+        .code-console {
+            background: white;
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: 0 2px 12px rgba(0, 0, 0, 0.1);
+            margin-bottom: 20px;
+        }
+        
+        .console-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 2px solid #e5e7eb;
+        }
+        
+        .console-title {
+            font-size: 1.2rem;
+            font-weight: 600;
+            color: #1f2937;
+        }
+        
+        .lock-toggle-container {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        
+        .toggle-label {
+            font-size: 0.9rem;
+            color: #6b7280;
+            font-weight: 500;
+        }
+        
+        /* Toggle Switch */
+        .toggle-switch {
+            position: relative;
+            display: inline-block;
+            width: 52px;
+            height: 28px;
+        }
+        
+        .toggle-switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+        
+        .toggle-slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: #cbd5e1;
+            transition: .3s;
+            border-radius: 28px;
+        }
+        
+        .toggle-slider:before {
+            position: absolute;
+            content: "";
+            height: 20px;
+            width: 20px;
+            left: 4px;
+            bottom: 4px;
+            background-color: white;
+            transition: .3s;
+            border-radius: 50%;
+        }
+        
+        input:checked + .toggle-slider {
+            background-color: #10b981;
+        }
+        
+        input:checked + .toggle-slider:before {
+            transform: translateX(24px);
+        }
+        
+        .lock-status {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 12px;
+            border-radius: 6px;
+            font-size: 0.85rem;
+            font-weight: 600;
+        }
+        
+        .lock-status.unlocked {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+        
+        .lock-status.locked {
+            background: #d1fae5;
+            color: #065f46;
+        }
+        
+        .lock-icon {
+            font-size: 1rem;
+        }
+        
+        .code-display-area {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+        
+        .code-block-wrapper {
+            border: 2px solid #e5e7eb;
+            border-radius: 8px;
+            overflow: hidden;
+            transition: all 0.3s;
+        }
+        
+        .code-block-wrapper.active {
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+        
+        .code-block-header {
+            background: #f3f4f6;
+            padding: 10px 15px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid #e5e7eb;
+        }
+        
+        .code-block-title {
+            font-weight: 600;
+            color: #374151;
+            font-size: 0.9rem;
+        }
+        
+        .code-badge {
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+        
+        .code-badge.unlocked {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+        
+        .code-badge.locked {
+            background: #d1fae5;
+            color: #065f46;
+        }
+        
+        .code-block-content {
+            position: relative;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        
+        .code-block-content pre {
+            margin: 0;
+            padding: 15px;
+            background: #282c34;
+            font-size: 0.85rem;
+            line-height: 1.6;
+        }
+        
+        .code-block-content code {
+            font-family: 'Courier New', Consolas, Monaco, monospace;
+        }
+        
+        .code-highlight-line {
+            background-color: rgba(255, 255, 0, 0.1);
+            display: block;
+            margin: 0 -15px;
+            padding: 0 15px;
         }
         
         /* 统计面板 */
@@ -345,6 +579,135 @@
         </div>
         
         <div class="dashboard">
+            <!-- 代码控制台 -->
+            <div class="code-console" style="grid-column: span 3;">
+                <div class="console-header">
+                    <h2 class="console-title">💻 交互式代码控制台</h2>
+                    <div class="lock-toggle-container">
+                        <span class="toggle-label">加锁模式</span>
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="lockToggle" onchange="toggleLockMode()">
+                            <span class="toggle-slider"></span>
+                        </label>
+                        <div id="lockStatus" class="lock-status unlocked">
+                            <span class="lock-icon">🔓</span>
+                            <span>无锁</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="code-display-area">
+                    <!-- 无锁版本代码 -->
+                    <div class="code-block-wrapper active" id="unlockedCodeBlock">
+                        <div class="code-block-header">
+                            <span class="code-block-title">无锁版本 (存在并发问题)</span>
+                            <span class="code-badge unlocked">UNLOCKED</span>
+                        </div>
+                        <div class="code-block-content">
+                            <pre><code class="language-go">func (s *AccountService) DeductBalance(
+    req *model.DeductRequest,
+    requestID string) *model.DeductResponse {
+    
+    db := config.GetDB()
+    
+    // Step 1: 读取当前余额 (无锁保护)
+    var account model.Account
+    if err := db.Where("user_id = ?", req.UserID).
+        First(&account).Error; err != nil {
+        return &model.DeductResponse{
+            Success: false,
+            Message: "账户不存在",
+        }
+    }
+    
+    // ⚠️ 模拟业务处理耗时，放大并发窗口
+    time.Sleep(10 * time.Millisecond)
+    
+    // Step 2: 检查余额是否足够
+    if account.Balance < req.Amount {
+        return &model.DeductResponse{
+            Success: false,
+            Message: "余额不足",
+        }
+    }
+    
+    // Step 3: 扣减余额 (存在竞态条件)
+    account.Balance -= req.Amount
+    if err := db.Save(&account).Error; err != nil {
+        return &model.DeductResponse{
+            Success: false,
+            Message: "扣款失败",
+        }
+    }
+    
+    return &model.DeductResponse{
+        Success:        true,
+        Message:        "扣款成功",
+        CurrentBalance: account.Balance,
+    }
+}</code></pre>
+                        </div>
+                    </div>
+                    
+                    <!-- 加锁版本代码 -->
+                    <div class="code-block-wrapper" id="lockedCodeBlock">
+                        <div class="code-block-header">
+                            <span class="code-block-title">加锁版本 (使用互斥锁)</span>
+                            <span class="code-badge locked">LOCKED</span>
+                        </div>
+                        <div class="code-block-content">
+                            <pre><code class="language-go">var accountMutex sync.Mutex
+
+func (s *AccountService) DeductBalanceWithLock(
+    req *model.DeductRequest,
+    requestID string) *model.DeductResponse {
+    
+    // 🔒 获取互斥锁，确保同一时刻只有一个协程执行
+    accountMutex.Lock()
+    defer accountMutex.Unlock()
+    
+    db := config.GetDB()
+    
+    // Step 1: 读取当前余额 (已加锁保护)
+    var account model.Account
+    if err := db.Where("user_id = ?", req.UserID).
+        First(&account).Error; err != nil {
+        return &model.DeductResponse{
+            Success: false,
+            Message: "账户不存在",
+        }
+    }
+    
+    // ⏱️ 模拟业务处理耗时
+    time.Sleep(10 * time.Millisecond)
+    
+    // Step 2: 检查余额是否足够
+    if account.Balance < req.Amount {
+        return &model.DeductResponse{
+            Success: false,
+            Message: "余额不足",
+        }
+    }
+    
+    // Step 3: 扣减余额 (线程安全)
+    account.Balance -= req.Amount
+    if err := db.Save(&account).Error; err != nil {
+        return &model.DeductResponse{
+            Success: false,
+            Message: "扣款失败",
+        }
+    }
+    
+    return &model.DeductResponse{
+        Success:        true,
+        Message:        "扣款成功",
+        CurrentBalance: account.Balance,
+    }
+}</code></pre>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
             <!-- 控制面板 -->
             <div class="card control-panel">
                 <h2 class="card-title">🎮 控制台</h2>
@@ -414,6 +777,22 @@
             <!-- 余额水位图 -->
             <div class="card">
                 <h2 class="card-title">📈 余额水位实时监控</h2>
+                
+                <!-- 历史查看控制 -->
+                <div class="time-selector" id="historyControls">
+                    <input type="datetime-local" id="startTime" />
+                    <input type="datetime-local" id="endTime" />
+                    <div style="display: flex; gap: 5px;">
+                        <button class="btn-info" style="flex: 1;" onclick="viewHistory()">📅 查看历史</button>
+                        <button class="btn-success hidden" id="realtimeBtn" style="flex: 1;" onclick="switchToRealtime()">🔴 返回实时</button>
+                    </div>
+                </div>
+                
+                <!-- 模式指示器 -->
+                <div id="modeIndicator" class="mode-indicator realtime">
+                    🔴 实时模式
+                </div>
+                
                 <div class="balance-chart">
                     <canvas id="balanceChart"></canvas>
                 </div>
@@ -445,8 +824,12 @@
         let isAttacking = false;            // 是否正在攻击
         let shouldStopAttack = false;       // 停止攻击标志
         let isMonitoringPaused = false;     // 监控是否暂停
+        let isHistoryMode = false;          // 是否处于历史查看模式
         
-        // 初始化图表
+        // ==================== 图表初始化 ====================
+        /**
+         * 初始化Chart.js图表
+         */
         function initChart() {
             const ctx = document.getElementById('balanceChart').getContext('2d');
             chart = new Chart(ctx, {
@@ -522,9 +905,12 @@
                     
                 case 'balance_update':
                     // 余额更新：定期接收的实时数据
-                    updateBalance(msg.data.balance);
-                    updateStats(msg.data.stats);
-                    updateChart(msg.data.balance);
+                    // 如果处于历史模式，忽略实时更新
+                    if (!isHistoryMode) {
+                        updateBalance(msg.data.balance);
+                        updateStats(msg.data.stats);
+                        updateChart(msg.data.balance);
+                    }
                     break;
                     
                 case 'trace':
@@ -540,6 +926,11 @@
                 case 'monitoring_status':
                     // 监控状态变更：更新监控按钮状态
                     updateMonitoringButton(msg.data.status);
+                    break;
+                    
+                case 'mode_changed':
+                    // 模式切换：服务端通知模式已切换
+                    updateLockModeUI(msg.data.use_lock);
                     break;
             }
         }
@@ -750,6 +1141,124 @@
             }
         }
         
+        // ==================== 历史数据查看 ====================
+        /**
+         * 查看历史数据
+         * 根据用户选择的时间范围加载历史余额数据
+         */
+        async function viewHistory() {
+            const startTime = document.getElementById('startTime').value;
+            const endTime = document.getElementById('endTime').value;
+            
+            // 验证时间选择
+            if (!startTime || !endTime) {
+                alert('请选择开始时间和结束时间');
+                return;
+            }
+            
+            const startTimestamp = new Date(startTime).getTime();
+            const endTimestamp = new Date(endTime).getTime();
+            
+            if (startTimestamp >= endTimestamp) {
+                alert('开始时间必须早于结束时间');
+                return;
+            }
+            
+            try {
+                // 请求历史数据
+                const response = await fetch(`/api/balance/history?start=${startTimestamp}&end=${endTimestamp}`);
+                if (!response.ok) {
+                    throw new Error('获取历史数据失败');
+                }
+                
+                const result = await response.json();
+                if (result.code !== 200) {
+                    throw new Error(result.message);
+                }
+                
+                // 切换到历史模式
+                isHistoryMode = true;
+                updateModeIndicator();
+                
+                // 显示返回实时按钮
+                document.getElementById('realtimeBtn').classList.remove('hidden');
+                
+                // 渲染历史数据
+                renderHistoryChart(result.data);
+                
+                console.log(`📊 已加载 ${result.data.length} 条历史数据`);
+            } catch (error) {
+                console.error('加载历史数据失败:', error);
+                alert('加载历史数据失败: ' + error.message);
+            }
+        }
+        
+        /**
+         * 渲染历史数据到图表
+         * @param {Array} historyData - 历史数据数组
+         */
+        function renderHistoryChart(historyData) {
+            if (!historyData || historyData.length === 0) {
+                alert('所选时间范围内没有数据');
+                return;
+            }
+            
+            // 清空现有数据
+            chart.data.labels = [];
+            chart.data.datasets[0].data = [];
+            chart.data.datasets[1].data = [];
+            
+            // 填充历史数据
+            historyData.forEach(item => {
+                const time = new Date(item.timestamp).toLocaleTimeString();
+                chart.data.labels.push(time);
+                chart.data.datasets[0].data.push(item.actual_balance / 100);
+                chart.data.datasets[1].data.push(item.expected_balance / 100);
+            });
+            
+            // 更新图表
+            chart.update();
+        }
+        
+        /**
+         * 切换回实时模式
+         * 清空历史数据，恢复实时更新
+         */
+        function switchToRealtime() {
+            // 切换回实时模式
+            isHistoryMode = false;
+            updateModeIndicator();
+            
+            // 隐藏返回实时按钮
+            document.getElementById('realtimeBtn').classList.add('hidden');
+            
+            // 清空图表
+            chart.data.labels = [];
+            chart.data.datasets[0].data = [];
+            chart.data.datasets[1].data = [];
+            chart.update();
+            
+            // 清空时间选择
+            document.getElementById('startTime').value = '';
+            document.getElementById('endTime').value = '';
+            
+            console.log('🔴 已切换回实时模式');
+        }
+        
+        /**
+         * 更新模式指示器
+         */
+        function updateModeIndicator() {
+            const indicator = document.getElementById('modeIndicator');
+            if (isHistoryMode) {
+                indicator.className = 'mode-indicator history';
+                indicator.textContent = '📅 历史模式';
+            } else {
+                indicator.className = 'mode-indicator realtime';
+                indicator.textContent = '🔴 实时模式';
+            }
+        }
+        
         // ==================== 清空追踪 ====================
         /**
          * 清空时序追踪列表
@@ -762,11 +1271,99 @@
             `;
         }
         
+        // ==================== 模式切换功能 ====================
+        /**
+         * 切换加锁模式
+         */
+        async function toggleLockMode() {
+            const lockToggle = document.getElementById('lockToggle');
+            const newMode = lockToggle.checked;
+            
+            try {
+                const response = await fetch('/api/mode/switch', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        use_lock: newMode
+                    })
+                });
+                
+                if (!response.ok) {
+                    throw new Error('切换模式失败');
+                }
+                
+                const result = await response.json();
+                console.log('模式切换成功:', result.data);
+                
+                // 更新UI
+                updateLockModeUI(newMode);
+                
+            } catch (error) {
+                console.error('切换模式失败:', error);
+                // 恢复toggle状态
+                lockToggle.checked = !newMode;
+                alert('切换模式失败，请重试');
+            }
+        }
+        
+        /**
+         * 更新锁模式UI显示
+         * @param {boolean} lockMode - 是否启用加锁模式
+         */
+        function updateLockModeUI(lockMode) {
+            const lockToggle = document.getElementById('lockToggle');
+            const lockStatus = document.getElementById('lockStatus');
+            const unlockedBlock = document.getElementById('unlockedCodeBlock');
+            const lockedBlock = document.getElementById('lockedCodeBlock');
+            
+            // 更新toggle开关
+            lockToggle.checked = lockMode;
+            
+            // 更新状态标签
+            if (lockMode) {
+                lockStatus.className = 'lock-status locked';
+                lockStatus.innerHTML = '<span class="lock-icon">🔒</span><span>已加锁</span>';
+                
+                // 高亮加锁版本代码
+                unlockedBlock.classList.remove('active');
+                lockedBlock.classList.add('active');
+            } else {
+                lockStatus.className = 'lock-status unlocked';
+                lockStatus.innerHTML = '<span class="lock-icon">🔓</span><span>无锁</span>';
+                
+                // 高亮无锁版本代码
+                unlockedBlock.classList.add('active');
+                lockedBlock.classList.remove('active');
+            }
+            
+            console.log('UI已更新，当前模式:', lockMode ? '加锁' : '无锁');
+        }
+        
+        /**
+         * 获取当前模式状态
+         */
+        async function getCurrentMode() {
+            try {
+                const response = await fetch('/api/mode/status');
+                if (response.ok) {
+                    const result = await response.json();
+                    updateLockModeUI(result.data.use_lock);
+                }
+            } catch (error) {
+                console.error('获取模式状态失败:', error);
+            }
+        }
+        
         // ==================== 初始化 ====================
         /**
          * 页面加载完成后的初始化操作
          */
         window.onload = async () => {
+            // 初始化代码高亮
+            hljs.highlightAll();
+            
             // 初始化图表
             initChart();
             
@@ -783,6 +1380,9 @@
             } catch (error) {
                 console.error('获取监控状态失败:', error);
             }
+            
+            // 获取并设置初始模式状态
+            await getCurrentMode();
         };
     </script>
 </body>
