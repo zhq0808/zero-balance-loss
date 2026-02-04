@@ -97,16 +97,77 @@ type TraceEvent struct {
 	Timestamp  int64  `json:"timestamp"`
 }
 
+// ConflictSnapshot 冲突快照 - 记录最近一次并发冲突的完整过程
+type ConflictSnapshot struct {
+	// Goroutine A (先到达的请求)
+	RequestA_ID         string `json:"request_a_id"`
+	RequestA_ReadTime   int64  `json:"request_a_read_time"`   // 纳秒时间戳
+	RequestA_ReadValue  int64  `json:"request_a_read_value"`  // 读到的余额
+	RequestA_CalcStart  int64  `json:"request_a_calc_start"`  // 计算开始时间
+	RequestA_CalcEnd    int64  `json:"request_a_calc_end"`    // 计算结束时间
+	RequestA_NewValue   int64  `json:"request_a_new_value"`   // 计算后的新值
+	RequestA_WriteTime  int64  `json:"request_a_write_time"`  // 写入时间
+	RequestA_WriteValue int64  `json:"request_a_write_value"` // 写入的值
+
+	// Goroutine B (后到达的请求)
+	RequestB_ID         string `json:"request_b_id"`
+	RequestB_ReadTime   int64  `json:"request_b_read_time"`
+	RequestB_ReadValue  int64  `json:"request_b_read_value"` // 关键：可能和A读到相同的旧值
+	RequestB_CalcStart  int64  `json:"request_b_calc_start"`
+	RequestB_CalcEnd    int64  `json:"request_b_calc_end"`
+	RequestB_NewValue   int64  `json:"request_b_new_value"`
+	RequestB_WriteTime  int64  `json:"request_b_write_time"`
+	RequestB_WriteValue int64  `json:"request_b_write_value"` // 可能覆盖A的写入
+
+	// 数据库视角
+	DB_InitialValue int64 `json:"db_initial_value"` // 初始值
+	DB_AfterA       int64 `json:"db_after_a"`       // A写入后的值
+	DB_AfterB       int64 `json:"db_after_b"`       // B写入后的值
+	DB_ExpectedB    int64 `json:"db_expected_b"`    // 如果B基于A的结果计算，应该得到的值
+	IsConflict      bool  `json:"is_conflict"`      // 是否发生冲突（B读到了旧值）
+	LostAmount      int64 `json:"lost_amount"`      // 丢失的金额
+	UseLock         bool  `json:"use_lock"`         // 是否使用了锁
+	CapturedAt      int64 `json:"captured_at"`      // 快照捕获时间
+	Amount          int64 `json:"amount"`           // 每次扣款金额
+}
+
+var (
+	// latestConflict 存储最近一次的冲突快照
+	latestConflict      *ConflictSnapshot
+	conflictSnapshotMux sync.RWMutex
+
+	// pendingRequests 用于临时存储正在执行的请求信息
+	pendingRequests    = make(map[string]*RequestTrace)
+	pendingRequestsMux sync.RWMutex
+)
+
+// RequestTrace 单个请求的追踪信息
+type RequestTrace struct {
+	RequestID  string
+	ReadTime   int64
+	ReadValue  int64
+	CalcStart  int64
+	CalcEnd    int64
+	NewValue   int64
+	WriteTime  int64
+	WriteValue int64
+	Amount     int64
+}
+
 // RegisterRoutes 注册路由
 // 注册所有HTTP路由和WebSocket端点
 func RegisterRoutes(r *gin.Engine) {
-	// 静态文件
-	r.Static("/static", "./web/static")
+	// 加载HTML模板
 	r.LoadHTMLGlob("./web/*.html")
 
 	// 首页
 	r.GET("/", func(c *gin.Context) {
 		c.HTML(http.StatusOK, "index.html", nil)
+	})
+
+	// 冲突可视化器页面
+	r.GET("/visualizer", func(c *gin.Context) {
+		c.HTML(http.StatusOK, "conflict_visualizer.html", nil)
 	})
 
 	// API 路由组
@@ -141,6 +202,10 @@ func RegisterRoutes(r *gin.Engine) {
 
 		// 历史数据接口
 		api.GET("/balance/history", getBalanceHistoryHandler) // 获取历史数据
+
+		// 冲突快照接口
+		api.GET("/conflict/snapshot", getConflictSnapshotHandler) // 获取最近一次冲突快照
+		api.POST("/conflict/clear", clearConflictSnapshotHandler) // 清除冲突快照
 	}
 
 	// WebSocket
@@ -238,6 +303,9 @@ func deductHandler(c *gin.Context) {
 		NewBalance: resp.Balance,
 		Timestamp:  time.Now().UnixMilli(),
 	})
+
+	// 记录请求追踪信息，用于捕获冲突
+	recordRequestTrace(requestID, resp, req.Amount)
 
 	c.JSON(http.StatusOK, Response{
 		Code:    200,
@@ -724,4 +792,153 @@ func init() {
 			})
 		}
 	}()
+}
+
+// recordRequestTrace 记录请求追踪信息
+func recordRequestTrace(requestID string, resp *service.DeductResponse, amount int64) {
+	pendingRequestsMux.Lock()
+	defer pendingRequestsMux.Unlock()
+
+	timeline := resp.Timeline
+
+	// 创建请求追踪
+	trace := &RequestTrace{
+		RequestID:  requestID,
+		ReadTime:   timeline.ReadStart,
+		ReadValue:  resp.OldBalance,
+		CalcStart:  timeline.ComputeStart,
+		CalcEnd:    timeline.ComputeEnd,
+		NewValue:   resp.Balance,
+		WriteTime:  timeline.WriteStart,
+		WriteValue: resp.Balance,
+		Amount:     amount,
+	}
+
+	pendingRequests[requestID] = trace
+
+	// 尝试捕获冲突：检查是否有两个请求读到了相同的值
+	tryCapture冲突Snapshot()
+
+	// 清理旧的追踪记录（保留最近的10个）
+	if len(pendingRequests) > 10 {
+		// 简单清理：找到最旧的删除
+		var oldestID string
+		var oldestTime int64 = 999999999999999999
+		for id, t := range pendingRequests {
+			if t.ReadTime < oldestTime {
+				oldestTime = t.ReadTime
+				oldestID = id
+			}
+		}
+		delete(pendingRequests, oldestID)
+	}
+}
+
+// tryCapture冲突Snapshot 尝试捕获冲突快照
+func tryCapture冲突Snapshot() {
+	// 获取当前模式
+	modeMutex.RLock()
+	currentLockMode := useLockMode
+	modeMutex.RUnlock()
+
+	// 找出所有读到相同值的请求
+	valueMap := make(map[int64][]*RequestTrace)
+	for _, trace := range pendingRequests {
+		valueMap[trace.ReadValue] = append(valueMap[trace.ReadValue], trace)
+	}
+
+	// 检查是否有至少两个请求读到了相同的值
+	for readValue, traces := range valueMap {
+		if len(traces) >= 2 {
+			// 找到冲突！选择前两个请求作为A和B
+			traceA := traces[0]
+			traceB := traces[1]
+
+			// 确保A是先读取的
+			if traceA.ReadTime > traceB.ReadTime {
+				traceA, traceB = traceB, traceA
+			}
+
+			// 构建冲突快照
+			snapshot := &ConflictSnapshot{
+				RequestA_ID:         traceA.RequestID,
+				RequestA_ReadTime:   traceA.ReadTime,
+				RequestA_ReadValue:  traceA.ReadValue,
+				RequestA_CalcStart:  traceA.CalcStart,
+				RequestA_CalcEnd:    traceA.CalcEnd,
+				RequestA_NewValue:   traceA.NewValue,
+				RequestA_WriteTime:  traceA.WriteTime,
+				RequestA_WriteValue: traceA.WriteValue,
+
+				RequestB_ID:         traceB.RequestID,
+				RequestB_ReadTime:   traceB.ReadTime,
+				RequestB_ReadValue:  traceB.ReadValue,
+				RequestB_CalcStart:  traceB.CalcStart,
+				RequestB_CalcEnd:    traceB.CalcEnd,
+				RequestB_NewValue:   traceB.NewValue,
+				RequestB_WriteTime:  traceB.WriteTime,
+				RequestB_WriteValue: traceB.WriteValue,
+
+				DB_InitialValue: readValue,
+				DB_AfterA:       traceA.WriteValue,
+				DB_AfterB:       traceB.WriteValue,
+				DB_ExpectedB:    traceA.WriteValue - traceB.Amount, // 如果B基于A的结果计算
+				IsConflict:      true,                              // B读到了旧值
+				LostAmount:      traceA.WriteValue - traceB.WriteValue,
+				UseLock:         currentLockMode,
+				CapturedAt:      time.Now().UnixMilli(),
+				Amount:          traceA.Amount,
+			}
+
+			// 保存快照
+			conflictSnapshotMux.Lock()
+			latestConflict = snapshot
+			conflictSnapshotMux.Unlock()
+
+			log.Printf("⚠️ 捕获冲突快照: A[%s] vs B[%s], 读取值=%d, A写入=%d, B写入=%d, 丢失=%d",
+				traceA.RequestID, traceB.RequestID, readValue,
+				traceA.WriteValue, traceB.WriteValue, snapshot.LostAmount)
+
+			// 找到一个冲突就够了
+			break
+		}
+	}
+}
+
+// getConflictSnapshotHandler 获取最近一次冲突快照
+func getConflictSnapshotHandler(c *gin.Context) {
+	conflictSnapshotMux.RLock()
+	snapshot := latestConflict
+	conflictSnapshotMux.RUnlock()
+
+	if snapshot == nil {
+		c.JSON(http.StatusOK, Response{
+			Code:    200,
+			Message: "no conflict captured yet",
+			Data:    nil,
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, Response{
+		Code:    200,
+		Message: "success",
+		Data:    snapshot,
+	})
+}
+
+// clearConflictSnapshotHandler 清除冲突快照
+func clearConflictSnapshotHandler(c *gin.Context) {
+	conflictSnapshotMux.Lock()
+	latestConflict = nil
+	conflictSnapshotMux.Unlock()
+
+	pendingRequestsMux.Lock()
+	pendingRequests = make(map[string]*RequestTrace)
+	pendingRequestsMux.Unlock()
+
+	c.JSON(http.StatusOK, Response{
+		Code:    200,
+		Message: "conflict snapshot cleared",
+	})
 }

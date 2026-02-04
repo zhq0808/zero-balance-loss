@@ -1,0 +1,1248 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>冲突可视化器 - The Stale Data Visualizer</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        
+        .header {
+            text-align: center;
+            color: white;
+            margin-bottom: 30px;
+        }
+        
+        .header h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+        
+        /* 三列布局 */
+        .battle-arena {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 20px;
+            margin-bottom: 30px;
+            min-height: 600px;
+        }
+        
+        .column {
+            background: white;
+            border-radius: 12px;
+            padding: 25px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            position: relative;
+        }
+        
+        .column-title {
+            font-size: 1.5rem;
+            font-weight: bold;
+            text-align: center;
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 3px solid;
+        }
+        
+        .goroutine-a {
+            border: 3px solid #3b82f6;
+        }
+        
+        .goroutine-a .column-title {
+            color: #3b82f6;
+            border-color: #3b82f6;
+        }
+        
+        .database {
+            border: 3px solid #10b981;
+        }
+        
+        .database .column-title {
+            color: #10b981;
+            border-color: #10b981;
+        }
+        
+        .goroutine-b {
+            border: 3px solid #f59e0b;
+        }
+        
+        .goroutine-b .column-title {
+            color: #f59e0b;
+            border-color: #f59e0b;
+        }
+        
+        /* 数据气泡 */
+        .data-bubble {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 12px;
+            margin: 15px 0;
+            font-size: 1.2rem;
+            text-align: center;
+            transition: all 0.5s ease;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        }
+        
+        .data-bubble.reading {
+            animation: pulse 1s infinite;
+            background: #3b82f6;
+        }
+        
+        .data-bubble.computing {
+            background: #f59e0b;
+        }
+        
+        .data-bubble.writing {
+            animation: glow 0.5s ease-in-out;
+            background: #10b981;
+        }
+        
+        .data-bubble.stale {
+            background: #ef4444;
+            animation: shake 0.5s;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+        }
+        
+        @keyframes glow {
+            0% { box-shadow: 0 0 5px #10b981; }
+            50% { box-shadow: 0 0 20px #10b981; }
+            100% { box-shadow: 0 0 5px #10b981; }
+        }
+        
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            25% { transform: translateX(-10px); }
+            75% { transform: translateX(10px); }
+        }
+        
+        /* 数据库显示 */
+        .db-display {
+            background: #f8f9fa;
+            border-radius: 12px;
+            padding: 30px;
+            margin: 20px 0;
+            text-align: center;
+            position: relative;
+        }
+        
+        .db-value {
+            font-size: 3rem;
+            font-weight: bold;
+            color: #10b981;
+            transition: all 0.5s ease;
+        }
+        
+        .db-value.updating {
+            animation: flip 0.6s;
+            color: #3b82f6;
+        }
+        
+        .db-value.conflict {
+            color: #ef4444;
+            animation: blink 0.5s 3;
+        }
+        
+        @keyframes flip {
+            0% { transform: rotateX(0); }
+            50% { transform: rotateX(90deg); }
+            100% { transform: rotateX(0); }
+        }
+        
+        @keyframes blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
+        }
+        
+        .db-lock {
+            position: absolute;
+            top: -30px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 3rem;
+            animation: lockAppear 0.5s;
+        }
+        
+        @keyframes lockAppear {
+            0% { transform: translateX(-50%) translateY(-50px) scale(0); }
+            100% { transform: translateX(-50%) translateY(0) scale(1); }
+        }
+        
+        /* 步骤指示器 */
+        .step-indicator {
+            display: flex;
+            justify-content: space-between;
+            margin: 15px 0;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 8px;
+        }
+        
+        .step {
+            flex: 1;
+            text-align: center;
+            padding: 10px;
+            border-radius: 6px;
+            font-weight: 500;
+            opacity: 0.3;
+            transition: all 0.3s;
+        }
+        
+        .step.active {
+            opacity: 1;
+            transform: scale(1.1);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        }
+        
+        .step.step-1 { background: #dbeafe; color: #1e40af; }
+        .step.step-2 { background: #fef3c7; color: #92400e; }
+        .step.step-3 { background: #d1fae5; color: #065f46; }
+        
+        /* 警告框 */
+        .warning-box {
+            background: #fee2e2;
+            border: 3px solid #ef4444;
+            border-radius: 12px;
+            padding: 20px;
+            margin: 20px 0;
+            display: none;
+            animation: slideIn 0.5s;
+        }
+        
+        .warning-box.show {
+            display: block;
+        }
+        
+        .warning-title {
+            font-size: 1.3rem;
+            font-weight: bold;
+            color: #991b1b;
+            margin-bottom: 10px;
+        }
+        
+        .warning-content {
+            font-size: 1rem;
+            color: #7f1d1d;
+            line-height: 1.6;
+        }
+        
+        @keyframes slideIn {
+            0% { transform: translateY(-20px); opacity: 0; }
+            100% { transform: translateY(0); opacity: 1; }
+        }
+        
+        /* 控制面板 */
+        .control-panel {
+            background: white;
+            border-radius: 12px;
+            padding: 25px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            margin-bottom: 20px;
+        }
+        
+        .button-group {
+            display: flex;
+            gap: 15px;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+        
+        button {
+            padding: 12px 30px;
+            border: none;
+            border-radius: 8px;
+            font-size: 1.1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        
+        .btn-primary {
+            background: #667eea;
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            background: #5568d3;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+        
+        .btn-success {
+            background: #10b981;
+            color: white;
+        }
+        
+        .btn-danger {
+            background: #ef4444;
+            color: white;
+        }
+        
+        .btn-warning {
+            background: #f59e0b;
+            color: white;
+        }
+        
+        .btn-info {
+            background: #3b82f6;
+            color: white;
+        }
+        
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none !important;
+        }
+        
+        /* 进度条 */
+        .progress-control {
+            margin-top: 20px;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 8px;
+        }
+        
+        .progress-bar {
+            width: 100%;
+            height: 8px;
+            background: #e0e0e0;
+            border-radius: 4px;
+            overflow: hidden;
+            margin-bottom: 15px;
+        }
+        
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            transition: width 0.3s ease;
+        }
+        
+        .stage-indicators {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 15px;
+        }
+        
+        .stage-indicator {
+            flex: 1;
+            text-align: center;
+            padding: 8px;
+            background: #e0e0e0;
+            margin: 0 5px;
+            border-radius: 6px;
+            font-size: 0.9rem;
+            font-weight: 600;
+            transition: all 0.3s;
+            cursor: pointer;
+        }
+        
+        .stage-indicator.active {
+            background: #667eea;
+            color: white;
+            transform: scale(1.05);
+        }
+        
+        .stage-indicator:hover {
+            background: #5568d3;
+            color: white;
+        }
+        
+        /* 连接线 */
+        .connection-line {
+            position: absolute;
+            height: 3px;
+            background: #667eea;
+            transform-origin: left center;
+            opacity: 0;
+            transition: opacity 0.5s;
+        }
+        
+        .connection-line.active {
+            opacity: 1;
+            animation: drawLine 0.5s;
+        }
+        
+        @keyframes drawLine {
+            0% { width: 0; }
+            100% { width: 100%; }
+        }
+        
+        .info-text {
+            text-align: center;
+            padding: 15px;
+            background: #dbeafe;
+            border-radius: 8px;
+            margin: 10px 0;
+            font-size: 0.95rem;
+            color: #1e40af;
+        }
+        
+        /* 时间轴显示 */
+        .timeline-display {
+            background: #f8f9fa;
+            border-radius: 8px;
+            padding: 15px;
+            margin: 15px 0;
+            font-family: 'Courier New', monospace;
+        }
+        
+        .timeline-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px dashed #e0e0e0;
+            font-size: 0.85rem;
+        }
+        
+        .timeline-item:last-child {
+            border-bottom: none;
+        }
+        
+        .timeline-label {
+            font-weight: 600;
+            color: #6b7280;
+        }
+        
+        .timeline-value {
+            color: #1f2937;
+        }
+        
+        .timeline-value.highlight {
+            color: #ef4444;
+            font-weight: bold;
+        }
+        
+        /* 请求历史 */
+        .request-history {
+            background: #f8f9fa;
+            border-radius: 8px;
+            padding: 15px;
+            margin: 15px 0;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        
+        .request-history h4 {
+            margin-bottom: 10px;
+            color: #374151;
+            font-size: 1rem;
+        }
+        
+        .history-item {
+            padding: 8px 12px;
+            background: white;
+            border-left: 3px solid #667eea;
+            margin-bottom: 8px;
+            border-radius: 4px;
+            font-size: 0.85rem;
+        }
+        
+        .history-item strong {
+            color: #667eea;
+        }
+        
+        .conflict-summary {
+            background: #fee2e2;
+            border-left: 4px solid #ef4444;
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 8px;
+        }
+        
+        .conflict-summary h3 {
+            color: #991b1b;
+            margin-bottom: 10px;
+        }
+        
+        .conflict-stat {
+            display: flex;
+            justify-content: space-between;
+            margin: 8px 0;
+            font-size: 1.05rem;
+        }
+        
+        .conflict-stat strong {
+            color: #7f1d1d;
+        }
+        
+        /* 时间轴显示 */
+        .timeline-display {
+            background: #f8f9fa;
+            border-radius: 8px;
+            padding: 15px;
+            margin: 15px 0;
+            font-family: 'Courier New', monospace;
+        }
+        
+        .timeline-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px dashed #e0e0e0;
+            font-size: 0.85rem;
+        }
+        
+        .timeline-item:last-child {
+            border-bottom: none;
+        }
+        
+        .timeline-label {
+            font-weight: 600;
+            color: #6b7280;
+        }
+        
+        .timeline-value {
+            color: #1f2937;
+        }
+        
+        .timeline-value.highlight {
+            color: #ef4444;
+            font-weight: bold;
+        }
+        
+        .timeline-value.simultaneous {
+            color: #f59e0b;
+            font-weight: bold;
+        }
+        
+        /* 请求历史 */
+        .request-history {
+            background: #ffffff;
+            border: 2px solid #e5e7eb;
+            border-radius: 8px;
+            padding: 15px;
+            margin: 15px 0;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        
+        .request-history h4 {
+            margin-bottom: 10px;
+            color: #374151;
+            font-size: 1rem;
+            border-bottom: 2px solid #667eea;
+            padding-bottom: 8px;
+        }
+        
+        .history-item {
+            padding: 10px;
+            margin: 8px 0;
+            background: #f8f9fa;
+            border-left: 4px solid #667eea;
+            border-radius: 4px;
+            font-size: 0.9rem;
+        }
+        
+        .history-item.goroutine-a {
+            border-left-color: #3b82f6;
+            background: #eff6ff;
+        }
+        
+        .history-item.goroutine-b {
+            border-left-color: #f59e0b;
+            background: #fffbeb;
+        }
+        
+        .history-time {
+            font-family: 'Courier New', monospace;
+            color: #6b7280;
+            font-size: 0.8rem;
+        }
+        
+        .history-action {
+            font-weight: 600;
+            color: #1f2937;
+            margin: 5px 0;
+        }
+        
+        .history-detail {
+            color: #6b7280;
+            font-size: 0.85rem;
+        }
+        
+        /* 控制按钮组 */
+        .playback-controls {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+            margin-top: 15px;
+        }
+        
+        .btn-small {
+            padding: 8px 16px;
+            font-size: 0.9rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>⚔️ 并发冲突可视化器</h1>
+            <p>The "Stale Data" Visualizer - 双边对决 + 中间真理层</p>
+        </div>
+        
+        <!-- 控制面板 -->
+        <div class="control-panel">
+            <div class="button-group">
+                <button class="btn-primary" onclick="loadConflict()">🔄 加载最近冲突</button>
+                <button class="btn-success" id="playBtn" onclick="playAnimation()">▶️ 自动播放</button>
+                <button class="btn-info" id="prevBtn" onclick="prevStage()" disabled>⏮️ 上一步</button>
+                <button class="btn-info" id="nextBtn" onclick="nextStage()" disabled>⏭️ 下一步</button>
+                <button class="btn-warning" id="pauseBtn" onclick="pauseAnimation()" style="display: none;">⏸️ 暂停</button>
+                <button class="btn-danger" onclick="clearConflict()">🗑️ 清除数据</button>
+            </div>
+            
+            <!-- 进度控制 -->
+            <div class="progress-control">
+                <div class="stage-indicators">
+                    <div class="stage-indicator" id="stageBtn0" onclick="goToStage(0)">
+                        🔵 阶段0<br>初始状态
+                    </div>
+                    <div class="stage-indicator" id="stageBtn1" onclick="goToStage(1)">
+                        🔵 阶段1<br>并发读取
+                    </div>
+                    <div class="stage-indicator" id="stageBtn2" onclick="goToStage(2)">
+                        🟡 阶段2<br>业务计算
+                    </div>
+                    <div class="stage-indicator" id="stageBtn3" onclick="goToStage(3)">
+                        🟢 阶段3<br>A写入
+                    </div>
+                    <div class="stage-indicator" id="stageBtn4" onclick="goToStage(4)">
+                        🔴 阶段4<br>B写入
+                    </div>
+                </div>
+                <div class="progress-bar">
+                    <div class="progress-fill" id="progressFill" style="width: 0%"></div>
+                </div>
+            </div>
+            
+            <div id="statusMessage" class="info-text" style="margin-top: 15px; display: none;"></div>
+        </div>
+        
+        <!-- 三列战场 -->
+        <div class="battle-arena">
+            <!-- 左侧：Goroutine A -->
+            <div class="column goroutine-a">
+                <div class="column-title">🔵 Goroutine A</div>
+                
+                <div class="step-indicator">
+                    <div class="step step-1" id="stepA1">Step 1<br>Read</div>
+                    <div class="step step-2" id="stepA2">Step 2<br>Calc</div>
+                    <div class="step step-3" id="stepA3">Step 3<br>Write</div>
+                </div>
+                
+                <div id="bubbleA" class="data-bubble">
+                    等待数据...
+                </div>
+                
+                <div class="timeline-display" id="timelineA">
+                    <h4 style="margin-bottom: 10px; color: #3b82f6;">⏱️ 时间线</h4>
+                    <div class="timeline-item">
+                        <span class="timeline-label">读取时间:</span>
+                        <span class="timeline-value" id="timeA_read">-</span>
+                    </div>
+                    <div class="timeline-item">
+                        <span class="timeline-label">计算开始:</span>
+                        <span class="timeline-value" id="timeA_calcStart">-</span>
+                    </div>
+                    <div class="timeline-item">
+                        <span class="timeline-label">计算结束:</span>
+                        <span class="timeline-value" id="timeA_calcEnd">-</span>
+                    </div>
+                    <div class="timeline-item">
+                        <span class="timeline-label">写入时间:</span>
+                        <span class="timeline-value" id="timeA_write">-</span>
+                    </div>
+                </div>
+                
+                <div class="request-history" id="historyA">
+                    <h4>📝 操作历史</h4>
+                    <div id="historyListA"></div>
+                </div>
+            </div>
+            
+            <!-- 中间：Database -->
+            <div class="column database">
+                <div class="column-title">💾 Database (Truth)</div>
+                
+                <div class="db-display">
+                    <div id="dbLock" class="db-lock" style="display: none;">🔒</div>
+                    <div class="db-value" id="dbValue">1000</div>
+                    <div style="font-size: 1rem; color: #6b7280; margin-top: 10px;">
+                        当前余额（分）
+                    </div>
+                </div>
+                
+                <div id="warningBox" class="warning-box">
+                    <div class="warning-title">⚠️ Stale Data 检测！</div>
+                    <div class="warning-content" id="warningContent">
+                        请求B正在使用过时的数据...
+                    </div>
+                </div>
+                
+                <div id="conflictSummary" class="conflict-summary" style="display: none;">
+                    <h3>📊 冲突统计</h3>
+                    <div class="conflict-stat">
+                        <span>初始值:</span>
+                        <strong id="summaryInitial">-</strong>
+                    </div>
+                    <div class="conflict-stat">
+                        <span>A写入后:</span>
+                        <strong id="summaryAfterA">-</strong>
+                    </div>
+                    <div class="conflict-stat">
+                        <span>B写入后:</span>
+                        <strong id="summaryAfterB">-</strong>
+                    </div>
+                    <div class="conflict-stat">
+                        <span>理论值:</span>
+                        <strong id="summaryExpected">-</strong>
+                    </div>
+                    <div class="conflict-stat">
+                        <span>丢失金额:</span>
+                        <strong id="summaryLost" style="color: #ef4444; font-size: 1.3rem;">-</strong>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 右侧：Goroutine B -->
+            <div class="column goroutine-b">
+                <div class="column-title">🟡 Goroutine B</div>
+                
+                <div class="step-indicator">
+                    <div class="step step-1" id="stepB1">Step 1<br>Read</div>
+                    <div class="step step-2" id="stepB2">Step 2<br>Calc</div>
+                    <div class="step step-3" id="stepB3">Step 3<br>Write</div>
+                </div>
+                
+                <div id="bubbleB" class="data-bubble">
+                    等待数据...
+                </div>
+                
+                <div class="timeline-display" id="timelineB">
+                    <h4 style="margin-bottom: 10px; color: #f59e0b;">⏱️ 时间线</h4>
+                    <div class="timeline-item">
+                        <span class="timeline-label">读取时间:</span>
+                        <span class="timeline-value" id="timeB_read">-</span>
+                    </div>
+                    <div class="timeline-item">
+                        <span class="timeline-label">计算开始:</span>
+                        <span class="timeline-value" id="timeB_calcStart">-</span>
+                    </div>
+                    <div class="timeline-item">
+                        <span class="timeline-label">计算结束:</span>
+                        <span class="timeline-value" id="timeB_calcEnd">-</span>
+                    </div>
+                    <div class="timeline-item">
+                        <span class="timeline-label">写入时间:</span>
+                        <span class="timeline-value" id="timeB_write">-</span>
+                    </div>
+                </div>
+                
+                <div class="request-history" id="historyB">
+                    <h4>📝 操作历史</h4>
+                    <div id="historyListB"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        let conflictData = null;
+        let currentStage = 0;
+        let isAutoPlaying = false;
+        let autoPlayTimer = null;
+        
+        // 格式化时间戳（纳秒转为可读格式）
+        function formatTimestamp(nanoTime) {
+            if (!nanoTime) return '-';
+            const date = new Date(nanoTime / 1000000); // 纳秒转毫秒
+            return date.toLocaleTimeString('zh-CN', { 
+                hour12: false, 
+                hour: '2-digit', 
+                minute: '2-digit', 
+                second: '2-digit',
+                fractionalSecondDigits: 3 
+            });
+        }
+        
+        // 计算相对时间（毫秒）
+        function getRelativeTime(nanoTime, baseTime) {
+            if (!nanoTime || !baseTime) return '-';
+            return ((nanoTime - baseTime) / 1000000).toFixed(2) + 'ms';
+        }
+        
+        // 加载冲突数据
+        async function loadConflict() {
+            try {
+                const response = await fetch('/api/conflict/snapshot');
+                const result = await response.json();
+                
+                if (result.code === 200 && result.data) {
+                    conflictData = result.data;
+                    displayConflict(conflictData);
+                    enableControls();
+                    goToStage(0);
+                    showStatus('✅ 冲突数据加载成功！可以使用步进控制或自动播放', 'success');
+                } else {
+                    showStatus('⚠️ 暂无冲突数据，请先在主页发起并发攻击', 'warning');
+                }
+            } catch (error) {
+                showStatus('❌ 加载失败: ' + error.message, 'error');
+            }
+        }
+        
+        // 显示冲突数据（静态）
+        function displayConflict(data) {
+            // 显示汇总信息
+            document.getElementById('summaryInitial').textContent = (data.db_initial_value / 100).toFixed(2) + '元';
+            document.getElementById('summaryAfterA').textContent = (data.db_after_a / 100).toFixed(2) + '元';
+            document.getElementById('summaryAfterB').textContent = (data.db_after_b / 100).toFixed(2) + '元';
+            document.getElementById('summaryExpected').textContent = (data.db_expected_b / 100).toFixed(2) + '元';
+            document.getElementById('summaryLost').textContent = (data.lost_amount / 100).toFixed(2) + '元';
+            document.getElementById('conflictSummary').style.display = 'block';
+            
+            // 计算基准时间（最早的读取时间）
+            const baseTime = Math.min(data.request_a_read_time, data.request_b_read_time);
+            
+            // 更新A的时间线
+            document.getElementById('timeA_read').textContent = formatTimestamp(data.request_a_read_time);
+            document.getElementById('timeA_calcStart').textContent = formatTimestamp(data.request_a_calc_start) + ' (+' + getRelativeTime(data.request_a_calc_start, baseTime) + ')';
+            document.getElementById('timeA_calcEnd').textContent = formatTimestamp(data.request_a_calc_end) + ' (+' + getRelativeTime(data.request_a_calc_end, baseTime) + ')';
+            document.getElementById('timeA_write').textContent = formatTimestamp(data.request_a_write_time) + ' (+' + getRelativeTime(data.request_a_write_time, baseTime) + ')';
+            
+            // 更新B的时间线
+            document.getElementById('timeB_read').textContent = formatTimestamp(data.request_b_read_time);
+            document.getElementById('timeB_calcStart').textContent = formatTimestamp(data.request_b_calc_start) + ' (+' + getRelativeTime(data.request_b_calc_start, baseTime) + ')';
+            document.getElementById('timeB_calcEnd').textContent = formatTimestamp(data.request_b_calc_end) + ' (+' + getRelativeTime(data.request_b_calc_end, baseTime) + ')';
+            document.getElementById('timeB_write').textContent = formatTimestamp(data.request_b_write_time) + ' (+' + getRelativeTime(data.request_b_write_time, baseTime) + ')';
+            
+            // 生成完整的操作历史记录
+            generateFullHistory(data, baseTime);
+        }
+        
+        // 生成完整的操作历史记录
+        function generateFullHistory(data, baseTime) {
+            // 创建所有操作的时间线数组
+            const operations = [
+                {
+                    goroutine: 'A',
+                    action: '读取余额',
+                    time: data.request_a_read_time,
+                    value: (data.request_a_read_value / 100).toFixed(2),
+                    detail: `请求ID: ${data.request_a_id}`
+                },
+                {
+                    goroutine: 'B',
+                    action: '读取余额',
+                    time: data.request_b_read_time,
+                    value: (data.request_b_read_value / 100).toFixed(2),
+                    detail: `请求ID: ${data.request_b_id}`
+                },
+                {
+                    goroutine: 'A',
+                    action: '开始计算',
+                    time: data.request_a_calc_start,
+                    value: '',
+                    detail: ''
+                },
+                {
+                    goroutine: 'B',
+                    action: '开始计算',
+                    time: data.request_b_calc_start,
+                    value: '',
+                    detail: ''
+                },
+                {
+                    goroutine: 'A',
+                    action: '完成计算',
+                    time: data.request_a_calc_end,
+                    value: (data.request_a_new_value / 100).toFixed(2),
+                    detail: `新值: ${(data.request_a_new_value / 100).toFixed(2)}元`
+                },
+                {
+                    goroutine: 'B',
+                    action: '完成计算',
+                    time: data.request_b_calc_end,
+                    value: (data.request_b_new_value / 100).toFixed(2),
+                    detail: `新值: ${(data.request_b_new_value / 100).toFixed(2)}元`
+                },
+                {
+                    goroutine: 'A',
+                    action: '写入数据库',
+                    time: data.request_a_write_time,
+                    value: (data.request_a_write_value / 100).toFixed(2),
+                    detail: `写入值: ${(data.request_a_write_value / 100).toFixed(2)}元`
+                },
+                {
+                    goroutine: 'B',
+                    action: '写入数据库',
+                    time: data.request_b_write_time,
+                    value: (data.request_b_write_value / 100).toFixed(2),
+                    detail: `写入值: ${(data.request_b_write_value / 100).toFixed(2)}元 ⚠️ 覆盖写入`
+                }
+            ];
+            
+            // 按时间排序
+            operations.sort((a, b) => a.time - b.time);
+            
+            // 生成HTML
+            let historyAHTML = '';
+            let historyBHTML = '';
+            
+            operations.forEach((op, index) => {
+                const relTime = getRelativeTime(op.time, baseTime);
+                const absTime = formatTimestamp(op.time);
+                const itemClass = op.goroutine === 'A' ? 'goroutine-a' : 'goroutine-b';
+                
+                const html = `
+                    <div class="history-item ${itemClass}">
+                        <div class="history-time">T+${relTime} (${absTime})</div>
+                        <div class="history-action">${op.action}${op.value ? ': ' + op.value + '元' : ''}</div>
+                        ${op.detail ? `<div class="history-detail">${op.detail}</div>` : ''}
+                    </div>
+                `;
+                
+                if (op.goroutine === 'A') {
+                    historyAHTML += html;
+                } else {
+                    historyBHTML += html;
+                }
+            });
+            
+            document.getElementById('historyListA').innerHTML = historyAHTML;
+            document.getElementById('historyListB').innerHTML = historyBHTML;
+        }
+        
+        // 启用控制按钮
+        function enableControls() {
+            document.getElementById('playBtn').disabled = false;
+            document.getElementById('nextBtn').disabled = false;
+            document.getElementById('prevBtn').disabled = false;
+        }
+        
+        // 禁用控制按钮
+        function disableControls() {
+            document.getElementById('playBtn').disabled = true;
+            document.getElementById('nextBtn').disabled = true;
+            document.getElementById('prevBtn').disabled = true;
+        }
+        
+        // 播放动画（自动）
+        async function playAnimation() {
+            if (!conflictData) {
+                showStatus('⚠️ 请先加载冲突数据', 'warning');
+                return;
+            }
+            
+            isAutoPlaying = true;
+            document.getElementById('playBtn').style.display = 'none';
+            document.getElementById('pauseBtn').style.display = 'inline-block';
+            disableControls();
+            
+            // 从阶段0开始自动播放
+            currentStage = 0;
+            goToStage(0);
+            
+            // 每1.5秒自动前进一个阶段
+            autoPlayTimer = setInterval(() => {
+                if (currentStage < 4) {
+                    nextStage();
+                } else {
+                    pauseAnimation();
+                }
+            }, 1500);
+        }
+        
+        // 暂停动画
+        function pauseAnimation() {
+            isAutoPlaying = false;
+            if (autoPlayTimer) {
+                clearInterval(autoPlayTimer);
+                autoPlayTimer = null;
+            }
+            document.getElementById('playBtn').style.display = 'inline-block';
+            document.getElementById('pauseBtn').style.display = 'none';
+            enableControls();
+        }
+        
+        // 下一步
+        function nextStage() {
+            if (currentStage < 4) {
+                goToStage(currentStage + 1);
+            }
+        }
+        
+        // 上一步
+        function prevStage() {
+            if (currentStage > 0) {
+                goToStage(currentStage - 1);
+            }
+        }
+        
+        // 跳转到指定阶段
+        function goToStage(stage) {
+            currentStage = stage;
+            updateProgress();
+            renderStage(stage);
+            updateHistory(stage);
+        }
+        
+        // 更新进度显示
+        function updateProgress() {
+            // 更新进度条
+            const progress = (currentStage / 4) * 100;
+            document.getElementById('progressFill').style.width = progress + '%';
+            
+            // 更新阶段指示器
+            for (let i = 0; i <= 4; i++) {
+                const btn = document.getElementById('stageBtn' + i);
+                if (i === currentStage) {
+                    btn.classList.add('active');
+                } else {
+                    btn.classList.remove('active');
+                }
+            }
+            
+            // 更新按钮状态
+            document.getElementById('prevBtn').disabled = (currentStage === 0);
+            document.getElementById('nextBtn').disabled = (currentStage === 4);
+        }
+        
+        // 渲染指定阶段
+        function renderStage(stage) {
+            // 重置所有步骤指示器
+            ['stepA1', 'stepA2', 'stepA3', 'stepB1', 'stepB2', 'stepB3'].forEach(id => {
+                document.getElementById(id).classList.remove('active');
+            });
+            
+            switch(stage) {
+                case 0:
+                    stage0_Initial();
+                    break;
+                case 1:
+                    stage1_Read();
+                    break;
+                case 2:
+                    stage2_Calculate();
+                    break;
+                case 3:
+                    stage3_AWrite();
+                    break;
+                case 4:
+                    stage4_BWrite();
+                    break;
+            }
+        }
+        
+        // 阶段0：初始状态
+        function stage0_Initial() {
+            document.getElementById('dbValue').textContent = (conflictData.db_initial_value / 100).toFixed(2);
+            document.getElementById('dbValue').className = 'db-value';
+            document.getElementById('warningBox').classList.remove('show');
+            
+            document.getElementById('bubbleA').textContent = '等待开始...';
+            document.getElementById('bubbleA').className = 'data-bubble';
+            document.getElementById('bubbleB').textContent = '等待开始...';
+            document.getElementById('bubbleB').className = 'data-bubble';
+        }
+        
+        // 阶段1：并发读取
+        function stage1_Read() {
+            const initValue = (conflictData.db_initial_value / 100).toFixed(2);
+            
+            // A读取
+            document.getElementById('stepA1').classList.add('active');
+            document.getElementById('bubbleA').className = 'data-bubble reading';
+            document.getElementById('bubbleA').innerHTML = `
+                <strong>🔵 读取中...</strong><br>
+                ID: ${conflictData.request_a_id}<br>
+                local_balance = ${initValue}元
+            `;
+            
+            // B读取
+            document.getElementById('stepB1').classList.add('active');
+            document.getElementById('bubbleB').className = 'data-bubble reading';
+            document.getElementById('bubbleB').innerHTML = `
+                <strong>🔵 读取中...</strong><br>
+                ID: ${conflictData.request_b_id}<br>
+                local_balance = ${initValue}元
+            `;
+        }
+        
+        // 阶段2：计算
+        function stage2_Calculate() {
+            const amount = (conflictData.amount / 100).toFixed(2);
+            
+            // A计算
+            document.getElementById('stepA1').classList.remove('active');
+            document.getElementById('stepA2').classList.add('active');
+            document.getElementById('bubbleA').className = 'data-bubble computing';
+            document.getElementById('bubbleA').innerHTML = `
+                <strong>🟡 计算中...</strong><br>
+                ${(conflictData.request_a_read_value / 100).toFixed(2)} - ${amount} = ${(conflictData.request_a_new_value / 100).toFixed(2)}元
+            `;
+            
+            // B计算
+            document.getElementById('stepB1').classList.remove('active');
+            document.getElementById('stepB2').classList.add('active');
+            document.getElementById('bubbleB').className = 'data-bubble computing';
+            document.getElementById('bubbleB').innerHTML = `
+                <strong>🟡 计算中...</strong><br>
+                ${(conflictData.request_b_read_value / 100).toFixed(2)} - ${amount} = ${(conflictData.request_b_new_value / 100).toFixed(2)}元
+            `;
+        }
+        
+        // 阶段3：A写入
+        function stage3_AWrite() {
+            document.getElementById('stepA2').classList.remove('active');
+            document.getElementById('stepA3').classList.add('active');
+            document.getElementById('bubbleA').className = 'data-bubble writing';
+            document.getElementById('bubbleA').innerHTML = `
+                <strong>🟢 写入成功！</strong><br>
+                写入值 = ${(conflictData.request_a_write_value / 100).toFixed(2)}元
+            `;
+            
+            // 数据库更新
+            const dbElement = document.getElementById('dbValue');
+            dbElement.className = 'db-value updating';
+            dbElement.textContent = (conflictData.db_after_a / 100).toFixed(2);
+        }
+        
+        // 阶段4：B写入（冲突！）
+        function stage4_BWrite() {
+            document.getElementById('stepB2').classList.remove('active');
+            document.getElementById('stepB3').classList.add('active');
+            
+            // 显示警告
+            document.getElementById('warningContent').innerHTML = `
+                <strong>⚠️ Stale Data 检测！</strong><br><br>
+                B的计算基准: ${(conflictData.request_b_read_value / 100).toFixed(2)}元<br>
+                DB当前实际值: ${(conflictData.db_after_a / 100).toFixed(2)}元<br>
+                <span style="color: #991b1b; font-weight: bold;">基准已过期！覆盖即将发生！</span>
+            `;
+            document.getElementById('warningBox').classList.add('show');
+            
+            // B写入
+            document.getElementById('bubbleB').className = 'data-bubble stale';
+            document.getElementById('bubbleB').innerHTML = `
+                <strong>❌ 覆盖写入！</strong><br>
+                写入值 = ${(conflictData.request_b_write_value / 100).toFixed(2)}元<br>
+                <span style="font-size: 0.9rem;">（覆盖了A的结果）</span>
+            `;
+            
+            // 数据库冲突
+            const dbElement = document.getElementById('dbValue');
+            dbElement.className = 'db-value conflict';
+            dbElement.textContent = (conflictData.db_after_b / 100).toFixed(2);
+        }
+        
+        // 更新操作历史
+        function updateHistory(stage) {
+            const baseTime = Math.min(conflictData.request_a_read_time, conflictData.request_b_read_time);
+            
+            let historyA = '';
+            let historyB = '';
+            
+            if (stage >= 1) {
+                historyA += `<div class="history-item">
+                    <strong>Step 1:</strong> 读取余额 ${(conflictData.request_a_read_value / 100).toFixed(2)}元<br>
+                    <small>时间: ${formatTimestamp(conflictData.request_a_read_time)}</small>
+                </div>`;
+                
+                historyB += `<div class="history-item">
+                    <strong>Step 1:</strong> 读取余额 ${(conflictData.request_b_read_value / 100).toFixed(2)}元<br>
+                    <small>时间: ${formatTimestamp(conflictData.request_b_read_time)}</small>
+                </div>`;
+            }
+            
+            if (stage >= 2) {
+                historyA += `<div class="history-item">
+                    <strong>Step 2:</strong> 计算新值 ${(conflictData.request_a_new_value / 100).toFixed(2)}元<br>
+                    <small>耗时: ${getRelativeTime(conflictData.request_a_calc_end, conflictData.request_a_calc_start)}</small>
+                </div>`;
+                
+                historyB += `<div class="history-item">
+                    <strong>Step 2:</strong> 计算新值 ${(conflictData.request_b_new_value / 100).toFixed(2)}元<br>
+                    <small>耗时: ${getRelativeTime(conflictData.request_b_calc_end, conflictData.request_b_calc_start)}</small>
+                </div>`;
+            }
+            
+            if (stage >= 3) {
+                historyA += `<div class="history-item">
+                    <strong>Step 3:</strong> 写入成功 ${(conflictData.request_a_write_value / 100).toFixed(2)}元<br>
+                    <small>时间: ${formatTimestamp(conflictData.request_a_write_time)}</small>
+                </div>`;
+            }
+            
+            if (stage >= 4) {
+                historyB += `<div class="history-item" style="border-left-color: #ef4444; background: #fee2e2;">
+                    <strong>Step 3:</strong> ❌ 覆盖写入 ${(conflictData.request_b_write_value / 100).toFixed(2)}元<br>
+                    <small>时间: ${formatTimestamp(conflictData.request_b_write_time)}</small>
+                </div>`;
+            }
+            
+            document.getElementById('historyListA').innerHTML = historyA || '<p style="color: #999;">暂无操作</p>';
+            document.getElementById('historyListB').innerHTML = historyB || '<p style="color: #999;">暂无操作</p>';
+        }
+        
+        // 清除冲突数据
+        async function clearConflict() {
+            try {
+                await fetch('/api/conflict/clear', { method: 'POST' });
+                conflictData = null;
+                document.getElementById('conflictSummary').style.display = 'none';
+                document.getElementById('warningBox').classList.remove('show');
+                resetAnimation();
+                showStatus('✅ 数据已清除', 'success');
+            } catch (error) {
+                showStatus('❌ 清除失败: ' + error.message, 'error');
+            }
+        }
+        
+        // 显示状态消息
+        function showStatus(message, type) {
+            const statusEl = document.getElementById('statusMessage');
+            statusEl.textContent = message;
+            statusEl.style.display = 'block';
+            
+            if (type === 'success') {
+                statusEl.style.background = '#d1fae5';
+                statusEl.style.color = '#065f46';
+            } else if (type === 'warning') {
+                statusEl.style.background = '#fef3c7';
+                statusEl.style.color = '#92400e';
+            } else {
+                statusEl.style.background = '#fee2e2';
+                statusEl.style.color = '#991b1b';
+            }
+        }
+        
+        // 页面加载后自动加载数据
+        window.onload = () => {
+            loadConflict();
+        };
+    </script>
+</body>
+</html>

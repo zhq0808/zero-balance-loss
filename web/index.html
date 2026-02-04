@@ -8,6 +8,8 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+    <!-- ECharts for swim lane visualization -->
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
     <style>
         * {
             margin: 0;
@@ -799,6 +801,22 @@ func (s *AccountService) DeductBalanceWithLock(
                 <div style="margin-top: 15px; display: flex; justify-content: center; gap: 20px; font-size: 0.9rem;">
                     <div><span style="color: #3b82f6;">●</span> 实际余额</div>
                     <div><span style="color: #ef4444;">●</span> 理论余额</div>
+                </div>
+            </div>
+            
+            <!-- 冲突可视化器链接 -->
+            <div class="card" style="grid-column: span 2; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white;">
+                <div style="text-align: center; padding: 30px;">
+                    <h2 style="color: white; font-size: 2rem; margin-bottom: 20px;">⚔️ 并发冲突可视化器</h2>
+                    <p style="font-size: 1.1rem; margin-bottom: 25px; opacity: 0.95;">
+                        双边对决 + 中间真理层 - 慢动作回放并发冲突过程
+                    </p>
+                    <a href="/visualizer" target="_blank" style="display: inline-block; padding: 15px 40px; background: white; color: #667eea; border-radius: 8px; text-decoration: none; font-weight: bold; font-size: 1.2rem; box-shadow: 0 4px 12px rgba(0,0,0,0.2); transition: all 0.3s;">
+                        🎬 打开可视化器
+                    </a>
+                    <p style="margin-top: 15px; font-size: 0.9rem; opacity: 0.85;">
+                        先在本页发起并发攻击，然后打开可视化器观看冲突回放
+                    </p>
                 </div>
             </div>
             

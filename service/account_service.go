@@ -22,10 +22,21 @@ type DeductRequest struct {
 
 // DeductResponse 扣款响应
 type DeductResponse struct {
-	UserID     int64  `json:"user_id"`
-	Balance    int64  `json:"balance"`     // 单位：分
-	OldBalance int64  `json:"old_balance"` // 单位：分
-	RequestID  string `json:"request_id"`
+	UserID     int64    `json:"user_id"`
+	Balance    int64    `json:"balance"`     // 单位：分
+	OldBalance int64    `json:"old_balance"` // 单位：分
+	RequestID  string   `json:"request_id"`
+	Timeline   Timeline `json:"timeline"` // 时间线数据
+}
+
+// Timeline 记录操作的时间线
+type Timeline struct {
+	ReadStart    int64 `json:"read_start"`    // 读取开始时间（纳秒）
+	ReadEnd      int64 `json:"read_end"`      // 读取结束时间（纳秒）
+	ComputeStart int64 `json:"compute_start"` // 计算开始时间（纳秒）
+	ComputeEnd   int64 `json:"compute_end"`   // 计算结束时间（纳秒）
+	WriteStart   int64 `json:"write_start"`   // 写入开始时间（纳秒）
+	WriteEnd     int64 `json:"write_end"`     // 写入结束时间（纳秒）
 }
 
 // AccountService 账户服务
@@ -52,10 +63,13 @@ func (s *AccountService) GetAccount(userID int64) (*model.Account, error) {
 // 这是一个有问题的实现，会导致并发场景下的余额丢失
 func (s *AccountService) DeductBalance(req *DeductRequest, requestID string) (*DeductResponse, error) {
 	db := config.GetDB()
+	var timeline Timeline
 
 	// 步骤1: 查询当前余额
+	timeline.ReadStart = time.Now().UnixNano()
 	log.Printf("[%s] Step 1: 读取账户 user_id=%d", requestID, req.UserID)
 	account, err := s.GetAccount(req.UserID)
+	timeline.ReadEnd = time.Now().UnixNano()
 	if err != nil {
 		return nil, err
 	}
@@ -68,18 +82,22 @@ func (s *AccountService) DeductBalance(req *DeductRequest, requestID string) (*D
 		return nil, errors.New("insufficient balance")
 	}
 
+	// 步骤3: 计算阶段（包含业务延迟）
+	timeline.ComputeStart = time.Now().UnixNano()
 	// 模拟一些处理时间，增加并发冲突的概率
 	time.Sleep(10 * time.Millisecond)
-
-	// 步骤3: 计算新余额
+	// 计算新余额
 	newBalance := account.Balance - req.Amount
 	log.Printf("[%s] Step 3: 计算新余额=%d分 (%.2f元)", requestID, newBalance, float64(newBalance)/100)
+	timeline.ComputeEnd = time.Now().UnixNano()
 
 	// 步骤4: 更新数据库（问题所在：基于读取时的旧值更新，没有任何并发保护）
 	// 这里使用 Update 而不是事务，会导致 Lost Update 问题
+	timeline.WriteStart = time.Now().UnixNano()
 	result := db.Model(&model.Account{}).
 		Where("user_id = ?", req.UserID).
 		Update("balance", newBalance)
+	timeline.WriteEnd = time.Now().UnixNano()
 
 	if result.Error != nil {
 		return nil, fmt.Errorf("failed to update balance: %w", result.Error)
@@ -92,6 +110,7 @@ func (s *AccountService) DeductBalance(req *DeductRequest, requestID string) (*D
 		Balance:    newBalance,
 		OldBalance: oldBalance,
 		RequestID:  requestID,
+		Timeline:   timeline,
 	}, nil
 }
 
@@ -103,10 +122,13 @@ func (s *AccountService) DeductBalanceWithLock(req *DeductRequest, requestID str
 	defer accountMutex.Unlock() // 确保函数返回时释放锁
 
 	db := config.GetDB()
+	var timeline Timeline
 
 	// 步骤1: 查询当前余额
+	timeline.ReadStart = time.Now().UnixNano()
 	log.Printf("[%s] 🔒 [LOCKED] Step 1: 读取账户 user_id=%d", requestID, req.UserID)
 	account, err := s.GetAccount(req.UserID)
+	timeline.ReadEnd = time.Now().UnixNano()
 	if err != nil {
 		return nil, err
 	}
@@ -119,17 +141,21 @@ func (s *AccountService) DeductBalanceWithLock(req *DeductRequest, requestID str
 		return nil, errors.New("insufficient balance")
 	}
 
+	// 步骤3: 计算阶段（包含业务延迟）
+	timeline.ComputeStart = time.Now().UnixNano()
 	// 模拟一些处理时间
 	time.Sleep(10 * time.Millisecond)
-
-	// 步骤3: 计算新余额
+	// 计算新余额
 	newBalance := account.Balance - req.Amount
 	log.Printf("[%s] 🔒 [LOCKED] Step 3: 计算新余额=%d分 (%.2f元)", requestID, newBalance, float64(newBalance)/100)
+	timeline.ComputeEnd = time.Now().UnixNano()
 
 	// 步骤4: 更新数据库（在锁的保护下，安全更新）
+	timeline.WriteStart = time.Now().UnixNano()
 	result := db.Model(&model.Account{}).
 		Where("user_id = ?", req.UserID).
 		Update("balance", newBalance)
+	timeline.WriteEnd = time.Now().UnixNano()
 
 	if result.Error != nil {
 		return nil, fmt.Errorf("failed to update balance: %w", result.Error)
@@ -142,6 +168,7 @@ func (s *AccountService) DeductBalanceWithLock(req *DeductRequest, requestID str
 		Balance:    newBalance,
 		OldBalance: oldBalance,
 		RequestID:  requestID,
+		Timeline:   timeline,
 	}, nil
 }
 

@@ -1,0 +1,37 @@
+# 编译产物
+*.exe
+*.test
+*.out
+zero-balance-loss
+/bin/
+/build/
+
+# 依赖包
+/vendor/
+
+# IDE 配置
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 日志文件
+*.log
+
+# 临时文件
+tmp/
+temp/
+*.tmp
+
+# 操作系统文件
+.DS_Store
+Thumbs.db
+
+# Go 测试覆盖率
+*.coverprofile
+coverage.out
+
+# 环境配置（可能包含敏感信息）
+.env
+.env.local
