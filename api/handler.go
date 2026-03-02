@@ -739,59 +739,101 @@ func broadcastTrace(event TraceEvent) {
 	})
 }
 
-// init 初始化函数
-// 启动后台定时任务，每500ms广播一次余额和统计数据
-// 该任务会检查监控状态，如果被暂停则跳过执行
-func init() {
+// monitoringStopChan 用于通知后台监控任务停止
+// monitoringDone 用于等待后台任务真正退出
+var (
+	monitoringStopChan = make(chan struct{})
+	monitoringDone     = make(chan struct{})
+)
+
+// StartBackgroundMonitoring 启动后台监控任务
+// 每500ms查询余额并广播，可通过 StopBackgroundMonitoring 停止
+func StartBackgroundMonitoring() {
 	go func() {
-		// 创建定时器，每500毫秒触发一次
+		defer close(monitoringDone) // 退出时通知外部：任务已结束
+
 		ticker := time.NewTicker(500 * time.Millisecond)
 		defer ticker.Stop()
 
 		log.Println("后台余额监控任务已启动（500ms间隔）")
 
-		for range ticker.C {
-			// 检查监控是否被暂停
-			monitoringMutex.RLock()
-			isPaused := isMonitoringPaused
-			monitoringMutex.RUnlock()
+		for {
+			select {
+			case <-monitoringStopChan:
+				// 收到停止信号，退出循环
+				log.Println("后台监控任务已停止")
+				return
+			case <-ticker.C:
+				// 检查监控是否被暂停
+				monitoringMutex.RLock()
+				isPaused := isMonitoringPaused
+				monitoringMutex.RUnlock()
 
-			// 如果监控已暂停，跳过本次查询和广播
-			if isPaused {
-				continue
+				if isPaused {
+					continue
+				}
+
+				balance, err := accountService.GetBalance(1)
+				if err != nil {
+					log.Printf("查询余额失败: %v", err)
+					continue
+				}
+
+				statsMutex.Lock()
+				currentStats := *stats
+				statsMutex.Unlock()
+
+				expectedBalance := balance
+				addBalanceHistory(balance, expectedBalance)
+
+				broadcast(WSMessage{
+					Type: "balance_update",
+					Data: map[string]interface{}{
+						"balance": balance,
+						"stats":   currentStats,
+					},
+					Timestamp: time.Now().UnixMilli(),
+				})
 			}
-
-			// 查询当前余额（这里会执行 SELECT 查询）
-			balance, err := accountService.GetBalance(1)
-			if err != nil {
-				log.Printf("查询余额失败: %v", err)
-				continue
-			}
-
-			// 获取当前统计数据
-			statsMutex.Lock()
-			currentStats := *stats
-			statsMutex.Unlock()
-
-			// 计算理论余额（用于对比）
-			// 理论余额 = 初始余额 - (成功请求数 × 扣款金额)
-			// 这里假设每次扣款金额一致，实际项目中可能需要更复杂的计算
-			expectedBalance := balance // 简化处理，可以根据实际业务调整
-
-			// 记录历史数据点
-			addBalanceHistory(balance, expectedBalance)
-
-			// 通过WebSocket广播余额更新给所有连接的客户端
-			broadcast(WSMessage{
-				Type: "balance_update",
-				Data: map[string]interface{}{
-					"balance": balance,
-					"stats":   currentStats,
-				},
-				Timestamp: time.Now().UnixMilli(),
-			})
 		}
 	}()
+}
+
+// StopBackgroundMonitoring 停止后台监控任务，等待其完全退出
+func StopBackgroundMonitoring() {
+	close(monitoringStopChan) // 发送停止信号
+	<-monitoringDone          // 阻塞等待任务退出，确保当前查询完成
+}
+
+// NotifyShutdownToWebSockets 向所有客户端发送服务器关闭通知
+func NotifyShutdownToWebSockets() {
+	wsMutex.Lock()
+	defer wsMutex.Unlock()
+
+	msg := WSMessage{
+		Type: "server_shutdown",
+		Data: map[string]interface{}{
+			"message": "服务器正在维护，请稍后刷新页面",
+		},
+		Timestamp: time.Now().UnixMilli(),
+	}
+
+	for client := range wsClients {
+		client.WriteJSON(msg)
+	}
+	log.Printf("已通知 %d 个 WebSocket 客户端服务器即将关闭", len(wsClients))
+}
+
+// CloseAllWebSockets 关闭所有 WebSocket 连接
+func CloseAllWebSockets() {
+	wsMutex.Lock()
+	defer wsMutex.Unlock()
+
+	for client := range wsClients {
+		client.Close()
+	}
+	wsClients = make(map[*websocket.Conn]bool)
+	log.Println("所有 WebSocket 连接已关闭")
 }
 
 // recordRequestTrace 记录请求追踪信息

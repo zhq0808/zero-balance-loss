@@ -51,7 +51,9 @@ type KafkaConfig struct {
 
 var AppConfig *Config
 
-// LoadConfig 加载配置文件
+// LoadConfig 加载配置文件，并用环境变量覆盖敏感配置
+// 优先级：环境变量 > config.yaml
+// 这样 config.yaml 可以安全提交到 Git，敏感信息通过环境变量注入
 func LoadConfig(configPath string) error {
 	data, err := os.ReadFile(configPath)
 	if err != nil {
@@ -63,7 +65,18 @@ func LoadConfig(configPath string) error {
 		return fmt.Errorf("failed to parse config file: %w", err)
 	}
 
-	log.Printf("Config loaded successfully from %s", configPath)
+	// 用环境变量覆盖配置（生产环境通过环境变量注入，不用改配置文件）
+	if mode := os.Getenv("SERVER_MODE"); mode != "" {
+		AppConfig.Server.Mode = mode
+	}
+	if dbPassword := os.Getenv("DB_PASSWORD"); dbPassword != "" {
+		AppConfig.Database.Password = dbPassword
+	}
+	if dbHost := os.Getenv("DB_HOST"); dbHost != "" {
+		AppConfig.Database.Host = dbHost
+	}
+
+	log.Printf("Config loaded: mode=%s, db_host=%s", AppConfig.Server.Mode, AppConfig.Database.Host)
 	return nil
 }
 
